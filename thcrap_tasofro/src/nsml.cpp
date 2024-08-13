@@ -14,6 +14,7 @@
 #include "bgm.h"
 #include "cv0.h"
 #include "nsml_images.h"
+#include "mediawiki.h"
 #include <map>
 #include <set>
 
@@ -26,26 +27,10 @@ static CRITICAL_SECTION cs;
 std::map<std::string, TasofroFile> files_list;
 static std::set<const char*, bool(*)(const char*, const char*)> game_fallback_ignore_list([](const char *a, const char *b){ return strcmp(a, b) < 0; });
 
-// Copy-paste of fn_for_game from patchfile.cpp
-static char* fn_for_th105(const char *fn)
+const MwDefinition mwdef_nsml
 {
-	const char *game_id = "th105";
-	size_t game_id_len = strlen(game_id) + 1;
-	char *full_fn;
-
-	if (!fn) {
-		return NULL;
-	}
-	full_fn = (char*)malloc(game_id_len + strlen(fn) + 1);
-
-	full_fn[0] = 0; // Because strcat
-	if (game_id) {
-		strncpy(full_fn, game_id, game_id_len);
-		strcat(full_fn, "/");
-	}
-	strcat(full_fn, fn);
-	return full_fn;
-}
+	{ "<ruby ", ">", "</ruby>", MwDefinition::Ruby::Order::TopThenBottom }, // ruby
+};
 
 size_t get_chain_size(char **chain)
 {
@@ -61,9 +46,10 @@ char **th123_resolve_chain_game(const char *fn)
 	char **th105_chain = nullptr;
 	defer(free(th105_chain));
 	if (game_fallback_ignore_list.find(fn) == game_fallback_ignore_list.end()) {
-		char *fn_game = fn_for_th105(fn);
-		th105_chain = resolve_chain(fn_game);
-		SAFE_FREE(fn_game);
+		if (char *fn_game = strdup_cat("th105/", fn)) {
+			th105_chain = resolve_chain(fn_game);
+			free(fn_game);
+		}
 	}
 
 	// Then, th123
@@ -110,10 +96,11 @@ int nsml_init()
 	if (game_id == TH105) {
 		char *bgm_fn = fn_for_game("data/csv/system/music.cv1.jdiff");
 		jsonvfs_add(bgm_fn, { "themes.js" }, bgm_generator);
-		SAFE_FREE(bgm_fn);
+		free(bgm_fn);
 
 		jsonvfs_game_add_map("data/csv/*/spellcard.cv1.jdiff", { "spells.js" });
 		jsonvfs_game_add_map("data/csv/*/storyspell.cv1.jdiff", { "spells.js" });
+		jsonvfs_game_add("data/csv/*/spellcard.cv1.jdiff", { "spellcomments.js" }, th105_spellcomment_generator);
 	}
 	else if (game_id == TH123) {
 		set_resolve_chain_game(th123_resolve_chain_game);
@@ -125,20 +112,19 @@ int nsml_init()
 
 		char *bgm_fn = fn_for_game("data/csv/system/music*.cv1.jdiff");
 		jsonvfs_add_map(bgm_fn, { "themes.js" });
-		SAFE_FREE(bgm_fn);
+		free(bgm_fn);
 
 		char *pattern_spell = fn_for_game("data/csv/*/spellcard.cv1.jdiff");
 		char *pattern_story = fn_for_game("data/csv/*/storyspell.cv1.jdiff");
-		char *spells_th105 = fn_for_th105("spells.js");
 		char *spells_th123 = fn_for_game("spells.js");
-		jsonvfs_add_map(pattern_spell, { spells_th105 });
-		jsonvfs_add_map(pattern_spell, { spells_th123 });
-		jsonvfs_add_map(pattern_story, { spells_th105 });
-		jsonvfs_add_map(pattern_story, { spells_th123 });
-		SAFE_FREE(pattern_spell);
-		SAFE_FREE(pattern_story);
-		SAFE_FREE(spells_th105);
-		SAFE_FREE(spells_th123);
+		char *spellcomments_th123 = fn_for_game("spellcomments.js");
+		jsonvfs_add_map(pattern_spell, { "th105/spells.js", spells_th123 });
+		jsonvfs_add_map(pattern_story, { "th105/spells.js", spells_th123 });
+		jsonvfs_add(pattern_spell, { "th105/spellcomments.js", spellcomments_th123 }, th105_spellcomment_generator);
+		free(pattern_spell);
+		free(pattern_story);
+		free(spells_th123);
+		free(spellcomments_th123);
 	}
 	return 0;
 }
@@ -146,7 +132,7 @@ int nsml_init()
 static void megamari_xor(const TasofroFile *fr, BYTE *buffer, size_t size)
 {
 	BYTE key = ((fr->offset >> 1) | 8) & 0xFF;
-	for (unsigned int i = 0; i < size; i++) {
+	for (size_t i = 0; i < size; i++) {
 		buffer[i] ^= key;
 	}
 }
@@ -154,7 +140,7 @@ static void megamari_xor(const TasofroFile *fr, BYTE *buffer, size_t size)
 static void nsml_xor(const TasofroFile *fr, BYTE *buffer, size_t size)
 {
 	BYTE key = ((fr->offset >> 1) | 0x23) & 0xFF;
-	for (unsigned int i = 0; i < size; i++) {
+	for (size_t i = 0; i < size; i++) {
 		buffer[i] ^= key;
 	}
 }
@@ -168,7 +154,7 @@ static void th105_xor(const TasofroFile *fr, BYTE *buffer, size_t size)
 		unsigned char xorval = 0x8b;
 		unsigned char xoradd = 0x71;
 		unsigned char xoraddadd = 0x95;
-		for (unsigned int i = 0; i < size; i++) {
+		for (size_t i = 0; i < size; i++) {
 			buffer[i] ^= xorval;
 			xorval += xoradd;
 			xoradd += xoraddadd;
@@ -356,7 +342,6 @@ extern "C" int BP_th105_replaceReadFile(x86_reg_t *regs, json_t *bp_info)
 	}
 	TasofroFile& fr = it->second;
 
-	ReadFileStack *stack = (ReadFileStack*)(regs->esp + sizeof(void*));
 	int ret = fr.replace_ReadFile(regs, game_xor, game_xor);
 
 	LeaveCriticalSection(&cs);
@@ -416,8 +401,8 @@ extern "C" int BP_th105_font_spacing(x86_reg_t *regs, json_t *bp_info)
 DWORD WINAPI th105_GetGlyphOutlineU(HDC hdc, UINT uChar, UINT uFormat, LPGLYPHMETRICS lpgm, DWORD cbBuffer, LPVOID lpvBuffer, const MAT2 *lpmat2)
 {
 	uChar = CharToUTF16(uChar);
-
-	if (uChar & 0xFFFF0000 ||
+	
+	if (uChar > WCHAR_MAX ||
 		font_has_character(hdc, uChar)) {
 		// is_character_in_font won't work if the character doesn't fit into a WCHAR.
 		// When it happens, we'll be optimistic and hope our font have that character.

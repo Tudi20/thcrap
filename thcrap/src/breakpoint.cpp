@@ -9,17 +9,6 @@
 
 #include "thcrap.h"
 
-/// Functions
-/// ---------
-// Breakpoint hook function, implemented in assembly. A CALL to this function
-// is written to every breakpoint's address.
-extern "C" void bp_entry(void);
-
-// Performs breakpoint lookup, invocation and stack adjustments. Returns the
-// number of bytes the stack has to be moved downwards by breakpoint_entry().
-extern "C" size_t TH_CDECL breakpoint_process(breakpoint_t *bp, size_t addr_index, x86_reg_t regs);
-/// ---------
-
 /// Constants
 /// ---------
 #define CALL_REL_OP_LEN 1
@@ -82,7 +71,7 @@ size_t *json_pointer_value(json_t *val, x86_reg_t *regs)
 	size_t *ptr;
 	const char *expr_end;
 
-	ptr = reg(regs, expr, &expr_end);
+	ptr = (size_t*)reg(regs, expr, &expr_end);
 	if (ptr && expr_end[0] == '\0') {
 		return ptr;
 	}
@@ -161,7 +150,7 @@ patch_val_t json_typed_value(json_t *val, x86_reg_t *regs, patch_value_type_t ty
 
 size_t* json_register_pointer(json_t *val, x86_reg_t *regs)
 {
-	return json_string_length(val) >= 3 ? reg(regs, json_string_value(val), nullptr) : nullptr;
+	return json_string_length(val) >= 3 ? (size_t*)reg(regs, json_string_value(val), nullptr) : nullptr;
 }
 
 size_t* json_object_get_register(json_t *object, x86_reg_t *regs, const char *key)
@@ -197,43 +186,13 @@ int breakpoint_cave_exec_flag_eval(x86_reg_t* regs, json_t* bp_info) {
 	return 1;
 }
 
-size_t TH_CDECL breakpoint_process(breakpoint_t *bp, size_t addr_index, x86_reg_t regs)
-{
-	// POPAD ignores the ESP register, so we have to implement our own mechanism
-	// to be able to manipulate it. 
-#ifdef TH_X64
-	const size_t stack_ptr_prev = regs.rsp;
-#else
-	const size_t stack_ptr_prev = regs.esp;
-#endif
-	
-	if(bp->func(&regs, bp->json_obj)) {
-		// Point return address to codecave.
-		regs.retaddr = (uintptr_t)bp->addr[addr_index].breakpoint_source;
-	}
-#ifdef TH_X64
-	const size_t stack_ptr_diff = regs.rsp - stack_ptr_prev;
-#else
-	const size_t stack_ptr_diff = regs.esp - stack_ptr_prev;
-#endif
-	if(stack_ptr_diff) {
-		// ESP change requested.
-		// Shift down the regs structure by the requested amount
-		x86_reg_t temp = regs;
-		_ReadWriteBarrier();
-		*(x86_reg_t*)((uint8_t*)(&regs) + stack_ptr_diff) = temp;
-	}
-	return stack_ptr_diff;
-}
-
 bool breakpoint_from_json(const char *name, json_t *in, breakpoint_t *out) {
 	if (!json_is_object(in)) {
 		log_printf("breakpoint %s: not an object\n", name);
 		return false;
 	}
 
-	if (json_object_get_eval_bool_default(in, "ignore", false, JEVAL_DEFAULT) ||
-		!json_object_get_eval_bool_default(in, "enable", true, JEVAL_DEFAULT)) {
+	if (hackpoint_ignored(in)) {
 		log_printf("breakpoint %s: ignored\n", name);
 		return false;
 	}
@@ -260,12 +219,43 @@ bool breakpoint_from_json(const char *name, json_t *in, breakpoint_t *out) {
 		return false;
 	}
 
+	size_t state_type = 0;
+	switch (json_object_get_eval_int(in, "type", &state_type, JEVAL_STRICT)) {
+		default:
+			log_printf("ERROR: invalid breakpoint type for breakpoint %s, must be 32-bit integer or string\n", name);
+			return false;
+		case JEVAL_SUCCESS:
+			state_type &= 0b11;
+		case JEVAL_NULL_PTR:
+			break;
+	}
+
+#if TH_X64
+	// x64 CPUs aren't guaranteed to support LAHF/SAHF when operating
+	// in long mode, so don't allow setting those breakpoint types
+	// if that situation is detected.
+	state_type |= !CPU_Supports_LMLSAHF();
+#endif
+	// State bit 1 indicates whether a stack adjustment is required
+	state_type <<= 1;
+
+	size_t stack_clear = 0;
+	switch (json_object_get_eval_int(in, "stack_clear_size", &stack_clear, JEVAL_STRICT)) {
+		default:
+			log_printf("ERROR: invalid breakpoint clear size for breakpoint %s, must be 16-bit integer or string\n", name);
+			return false;
+		case JEVAL_SUCCESS:
+			state_type |= stack_clear != 0;
+		case JEVAL_NULL_PTR:
+			break;
+	}
+
 	out->name = strdup(name);
 	out->cavesize = cavesize;
 
 	out->expected = NULL;
 	if (const char* expected = json_object_get_concat_string_array(in, "expected")) { // Allocates a string that must be freed if non-null
-		size_t expected_size = code_string_calc_size(expected);
+		size_t expected_size = code_string_validate_size(expected);
 		if (expected_size == cavesize) {
 			out->expected = expected;
 		}
@@ -276,8 +266,10 @@ bool breakpoint_from_json(const char *name, json_t *in, breakpoint_t *out) {
 	}
 
 	out->json_obj = json_incref(in);
-	out->func = nullptr;
 	out->addr = addrs;
+	out->stack_adjust = (uint16_t)stack_clear;
+	out->state_flags = (uint8_t)state_type;
+	out->func = nullptr;
 
 	return true;
 }
@@ -316,7 +308,7 @@ static inline void TH_FASTCALL cave_fix(uint8_t* sourcecave, uint8_t* bp_addr, s
 		*(uint32_t*)&sourcecave[sourcecave_size + CALL_LEN] = x86_JMP_NEAR_ABSPTR;
 		add_constpool_raw_pointer((uintptr_t)(bp_addr + CALL_REL_LEN + offset_old), (uintptr_t)&sourcecave[sourcecave_size + CALL_LEN + CALL_OP_LEN]);
 
-		log_printf("fixing rel offset 0x%X... \n", offset);
+		log_printf("fixing rel offset 0x%X... \n", offset_old);
 #endif
 	}
 	/// ------------------
@@ -349,17 +341,111 @@ static bool breakpoint_local_init(
 }
 
 extern "C" {
-	extern const uint8_t bp_entry_end;
-	extern const uint8_t bp_entry_indexptr;
-	extern const uint8_t bp_entry_localptr;
-	extern const uint8_t bp_entry_callptr;
+	extern const uint8_t bp_entry0, bp_entry0_jsonptr, bp_entry0_funcptr, bp_entry0_caveptr, bp_entry0_end;
+
+	extern const uint8_t bp_entry0s, bp_entry0s_jsonptr, bp_entry0s_funcptr, bp_entry0s_caveptr, bp_entry0s_end, bp_entry0s_retpop;
+
+	extern const uint8_t bp_entry1, bp_entry1_jsonptr, bp_entry1_funcptr, bp_entry1_caveptr, bp_entry1_end;
+
+	extern const uint8_t bp_entry1s, bp_entry1s_jsonptr, bp_entry1s_funcptr, bp_entry1s_caveptr, bp_entry1s_end, bp_entry1s_retpop;
+
+	extern const uint8_t bp_entry2, bp_entry2_jsonptr, bp_entry2_funcptr, bp_entry2_caveptr, bp_entry2_end;
+
+	extern const uint8_t bp_entry2s, bp_entry2s_jsonptr, bp_entry2s_funcptr, bp_entry2s_caveptr, bp_entry2s_end, bp_entry2s_retpop;
+
+	extern const uint8_t bp_entry3, bp_entry3_jsonptr, bp_entry3_funcptr, bp_entry3_caveptr, bp_entry3_end;
+
+	extern const uint8_t bp_entry3s, bp_entry3s_jsonptr, bp_entry3s_funcptr, bp_entry3s_caveptr, bp_entry3s_end, bp_entry3s_retpop;
 }
 
 // Calculate all the offsets once and store them for later
-static const size_t bp_entry_size  = &bp_entry_end          - (uint8_t*)&bp_entry;
-static const size_t bp_entry_index = &bp_entry_indexptr + 1 - (uint8_t*)&bp_entry;
-static const size_t bp_entry_local = &bp_entry_localptr + MOV_PTR_LEN - (uint8_t*)&bp_entry;
-static const size_t bp_entry_call  = &bp_entry_callptr  + MOV_PTR_LEN - (uint8_t*)&bp_entry;
+
+struct BreakpointTypeData {
+	const uint8_t* entry_addr;
+	ptrdiff_t total_size;
+	ptrdiff_t json_ptr_offset;
+	ptrdiff_t call_offset;
+	ptrdiff_t cave_addr_offset;
+	ptrdiff_t ret_pop_offset;
+};
+
+#if TH_X86
+#define JSON_PTR_OFFSET 1
+#define FUNC_PTR_OFFSET 1
+#define CAVE_PTR_OFFSET 3
+#else
+#define JSON_PTR_OFFSET 2
+#define FUNC_PTR_OFFSET 2
+#define CAVE_PTR_OFFSET 2
+#endif
+#define RET_POP_OFFSET 1
+
+static const BreakpointTypeData breakpoint_types[] = {
+	{
+		&bp_entry0,
+		&bp_entry0_end                       - &bp_entry0,
+		&bp_entry0_jsonptr + JSON_PTR_OFFSET - &bp_entry0,
+		&bp_entry0_funcptr + FUNC_PTR_OFFSET - &bp_entry0,
+		&bp_entry0_caveptr + CAVE_PTR_OFFSET - &bp_entry0,
+		0
+	},
+	{
+		&bp_entry0s,
+		&bp_entry0s_end                       - &bp_entry0s,
+		&bp_entry0s_jsonptr + JSON_PTR_OFFSET - &bp_entry0s,
+		&bp_entry0s_funcptr + FUNC_PTR_OFFSET - &bp_entry0s,
+		&bp_entry0s_caveptr + CAVE_PTR_OFFSET - &bp_entry0s,
+		&bp_entry0s_retpop  + RET_POP_OFFSET  - &bp_entry0s
+	},
+	{
+		&bp_entry1,
+		&bp_entry1_end                       - &bp_entry1,
+		&bp_entry1_jsonptr + JSON_PTR_OFFSET - &bp_entry1,
+		&bp_entry1_funcptr + FUNC_PTR_OFFSET - &bp_entry1,
+		&bp_entry1_caveptr + CAVE_PTR_OFFSET - &bp_entry1,
+		0
+	},
+	{
+		&bp_entry1s,
+		&bp_entry1s_end                       - &bp_entry1s,
+		&bp_entry1s_jsonptr + JSON_PTR_OFFSET - &bp_entry1s,
+		&bp_entry1s_funcptr + FUNC_PTR_OFFSET - &bp_entry1s,
+		&bp_entry1s_caveptr + CAVE_PTR_OFFSET - &bp_entry1s,
+		&bp_entry1s_retpop  + RET_POP_OFFSET  - &bp_entry1s
+	},
+	{
+		&bp_entry2,
+		&bp_entry2_end                       - &bp_entry2,
+		&bp_entry2_jsonptr + JSON_PTR_OFFSET - &bp_entry2,
+		&bp_entry2_funcptr + FUNC_PTR_OFFSET - &bp_entry2,
+		&bp_entry2_caveptr + CAVE_PTR_OFFSET - &bp_entry2,
+		0
+	},
+	{
+		&bp_entry2s,
+		&bp_entry2s_end                       - &bp_entry2s,
+		&bp_entry2s_jsonptr + JSON_PTR_OFFSET - &bp_entry2s,
+		&bp_entry2s_funcptr + FUNC_PTR_OFFSET - &bp_entry2s,
+		&bp_entry2s_caveptr + CAVE_PTR_OFFSET - &bp_entry2s,
+		&bp_entry2s_retpop  + RET_POP_OFFSET  - &bp_entry2s
+	},
+	{
+		&bp_entry3,
+		&bp_entry3_end                       - &bp_entry3,
+		&bp_entry3_jsonptr + JSON_PTR_OFFSET - &bp_entry3,
+		&bp_entry3_funcptr + FUNC_PTR_OFFSET - &bp_entry3,
+		&bp_entry3_caveptr + CAVE_PTR_OFFSET - &bp_entry3,
+		0
+	},
+	{
+		&bp_entry3s,
+		&bp_entry3s_end                       - &bp_entry3s,
+		&bp_entry3s_jsonptr + JSON_PTR_OFFSET - &bp_entry3s,
+		&bp_entry3s_funcptr + FUNC_PTR_OFFSET - &bp_entry3s,
+		&bp_entry3s_caveptr + CAVE_PTR_OFFSET - &bp_entry3s,
+		&bp_entry3s_retpop  + RET_POP_OFFSET  - &bp_entry3s
+	}
+};
 
 size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMod, HackpointMemoryPage page_array[2])
 {
@@ -369,6 +455,7 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 	}
 
 	size_t sourcecaves_total_size = 0;
+	size_t callcaves_total_size = 0;
 	size_t failed = bp_count;
 	size_t total_valid_addrs = 0;
 	size_t largest_cavesize = 0;
@@ -410,7 +497,8 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 		uintptr_t addr;
 		for (hackpoint_addr_t* cur_addr = cur.addr;
 			 eval_hackpoint_addr(cur_addr, &addr, hMod);
-			 ++cur_addr) {
+			 ++cur_addr
+		) {
 
 			if (!addr) {
 				// NULL_ADDR
@@ -433,6 +521,7 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 			breakpoint_total_size[i] = total_cavesize;
 			if (cavesize > largest_cavesize) largest_cavesize = cavesize;
 			total_valid_addrs += cur_valid_addrs;
+			callcaves_total_size += breakpoint_types[cur.state_flags].total_size * cur_valid_addrs;
 			--failed;
 		}
 	}
@@ -447,16 +536,18 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 	page_array[0].size = sourcecaves_total_size;
 	memset(cave_source, x86_INT3, sourcecaves_total_size);
 
-	const size_t callcaves_total_size = total_valid_addrs * bp_entry_size;
 	uint8_t *const cave_call = (uint8_t*)VirtualAlloc(0, callcaves_total_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 	page_array[1].address = cave_call;
 	page_array[1].size = callcaves_total_size;
 
+	/*
 	for (uint8_t *callcave_fill = cave_call, *const callcave_fill_end = cave_call + callcaves_total_size;
 		 callcave_fill < callcave_fill_end;
-		 callcave_fill += bp_entry_size) {
+		 callcave_fill += bp_entry_size
+	) {
 		memcpy(callcave_fill, (uint8_t*)&bp_entry, bp_entry_size);
 	}
+	*/
 
 	log_printf(
 		"\n"
@@ -499,20 +590,27 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 			uintptr_t addr;
 			for (hackpoint_addr_t* cur_addr = cur->addr;
 				 eval_hackpoint_addr(cur_addr, &addr, hMod);
-				 ++cur_addr) {
+				 ++cur_addr
+			) {
 
 				if (!addr) {
 					// NULL_ADDR
 					continue;
 				}
 
-				PatchBPEntryInst(callcave_p, bp_entry_index, uint32_t, cur_valid_addrs++);
-				PatchBPEntryInst(callcave_p, bp_entry_local, const breakpoint_t*, cur);
+				memcpy(callcave_p, breakpoint_types[cur->state_flags].entry_addr, breakpoint_types[cur->state_flags].total_size);
+
+				PatchBPEntryInst(callcave_p, breakpoint_types[cur->state_flags].json_ptr_offset, json_t*, cur->json_obj);
 #if TH_X86
-				PatchBPEntryInst(callcave_p, bp_entry_call, uint32_t, (uintptr_t)&breakpoint_process - (uintptr_t)bp_instance_ptr - sizeof(void*));
+				PatchBPEntryInst(callcave_p, breakpoint_types[cur->state_flags].call_offset, uint32_t, (uintptr_t)cur->func - (uintptr_t)bp_instance_ptr - sizeof(void*));
 #else
-				PatchBPEntryInst(callcave_p, bp_entry_call, uint64_t, (uintptr_t)&breakpoint_process);
+				PatchBPEntryInst(callcave_p, breakpoint_types[cur->state_flags].call_offset, uintptr_t, cur->func);
 #endif
+				PatchBPEntryInst(callcave_p, breakpoint_types[cur->state_flags].cave_addr_offset, uintptr_t, sourcecave_p);
+
+				if (uint16_t stack_adjust = cur->stack_adjust) {
+					PatchBPEntryInst(callcave_p, breakpoint_types[cur->state_flags].ret_pop_offset, uint16_t, stack_adjust);
+				}
 
 #if TH_X86
 				// CALL bp_entry
@@ -532,7 +630,7 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 
 #if TH_X64
 					// CALL callcave
-					add_constpool_raw_pointer(callcave_p, addr + CALL_OP_LEN);
+					add_constpool_raw_pointer((uintptr_t)callcave_p, addr + CALL_OP_LEN);
 #endif
 
 					sourcecave_p += breakpoint_total_size[i];
@@ -542,7 +640,7 @@ size_t breakpoints_apply(breakpoint_t *breakpoints, size_t bp_count, HMODULE hMo
 					++failed;
 				}
 
-				callcave_p += bp_entry_size;
+				callcave_p += breakpoint_types[cur->state_flags].total_size;
 			}
 		}
 	}

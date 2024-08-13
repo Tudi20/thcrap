@@ -9,6 +9,14 @@
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{4F1C381C-5220-4411-A27B-A7D0731B8099}</ProjectGuid>
@@ -28,8 +36,9 @@
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>thcrap_i18n.def</ModuleDefinitionFile>
     </Link>
-    <ClCompile />
-    <ClCompile />
+    <ClCompile>
+      <PreprocessorDefinitions>THCRAP_ALLOW_INTERNAL_APIS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\plurals.cpp">
@@ -37,14 +46,14 @@
     </ClCompile>
     <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\thcrap_i18n.h" />
-	<ClInclude Include="src\i18n_private.h" />
+    <ClInclude Include="src\i18n_private.h" />
     <ClCompile Include="src\i18n.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-	<ClCompile Include="src\files.cpp">
+    <ClCompile Include="src\files.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-	<ClCompile Include="src\dllmain.cpp">
+    <ClCompile Include="src\dllmain.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ResourceCompile Include="thcrap_i18n.rc" />

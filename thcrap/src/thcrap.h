@@ -11,8 +11,6 @@
 
 #define WIN32_LEAN_AND_MEAN
 
-#include "compiler_support.h"
-
 #ifdef _M_X64
 #define TH_X64 1
 #endif
@@ -20,35 +18,52 @@
 #define TH_X86 1
 #endif
 
+#include "compiler_support.h"
+
+// THCRAP_API: Regular exports that are supposed to be stable
+// THCRAP_EXPORT_API: Exports that are only exported via dllexport and not a def file
+// THCRAP_INTERNAL_API: Exports that only exist for technical reasons
+// THCRAP_BREAKPOINT_API: Exports that only exist for use with breakpoints. Probably shouldn't be called directly
 #ifdef THCRAP_EXPORTS
 # define THCRAP_API TH_EXPORT
-# define THCRAP_INTERNAL_API TH_EXPORT
 # define THCRAP_EXPORT_API TH_EXPORT
+# define THCRAP_INTERNAL_API TH_EXPORT
 #else
 # define THCRAP_API TH_IMPORT
-# define THCRAP_INTERNAL_API TH_DEPRECATED_REASON("This function is not available for use outside of the main thcrap dll")
-# define THCRAP_EXPORT_API
+# define THCRAP_EXPORT_API TH_IMPORT
+# ifdef THCRAP_ALLOW_INTERNAL_APIS
+#  define THCRAP_INTERNAL_API TH_IMPORT
+# else
+#  define THCRAP_INTERNAL_API TH_DEPRECATED_REASON("This function is not available for use outside of the main thcrap dll") TH_IMPORT
+# endif
 #endif
+# define THCRAP_BREAKPOINT_API THCRAP_API
 
 #ifdef __cplusplus
 #include <functional>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
+
+// "text"s creates an std::string
+// "text"sv creates an std::string_view
+// L"text"s creates an std::wstring
+// L"text"sv creates an std::wstring_view
+using namespace std::literals::string_literals;
+using namespace std::literals::string_view_literals;
 
 extern "C" {
 #endif
 
 #include <win32_utf8.h>
-// The bundled CRT includes a standards compliant snprintf,
-// so the old macro definition to _snprintf is obsolete.
-#undef snprintf
 #include <stdbool.h>
 #include <jansson.h>
 #include "exception.h"
 #include "long_double.h"
 #include "util.h"
+#include "build_str.h"
 #include "jansson_ex.h"
 #include "expression.h"
 #include "global.h"

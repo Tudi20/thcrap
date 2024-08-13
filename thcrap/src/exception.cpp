@@ -118,6 +118,7 @@ static void log_print_context(CONTEXT* ctx)
 					limit_out = limit_out << 12 | 0xFFF;
 				}
 			};
+#if TH_X86
 			LDT_ENTRY cs_seg_data, ss_seg_data, ds_seg_data, es_seg_data, fs_seg_data, gs_seg_data;
 			uintptr_t cs_base, ss_base, ds_base, es_base, fs_base, gs_base;
 			size_t cs_limit, ss_limit, ds_limit, es_limit, fs_limit, gs_limit;
@@ -161,6 +162,23 @@ static void log_print_context(CONTEXT* ctx)
 					, ctx->SegGs, gs_base, gs_limit
 				);
 			}
+#else
+			log_printf(
+				"\n"
+				"CS: 0x%04hX\n"
+				"SS: 0x%04hX\n"
+				"DS: 0x%04hX\n"
+				"ES: 0x%04hX\n"
+				"FS: 0x%04hX\n"
+				"GS: 0x%04hX\n"
+				, ctx->SegCs
+				, ctx->SegSs
+				, ctx->SegDs
+				, ctx->SegEs
+				, ctx->SegFs
+				, ctx->SegGs
+			);
+#endif
 		}
 		static constexpr const char* rounding_strings[] = {
 			"Round to Nearest",
@@ -184,15 +202,24 @@ static void log_print_context(CONTEXT* ctx)
 				"Empty"
 			};
 
+#if TH_X64
+#define FloatSave FltSave
+#define RegisterArea FloatRegisters
+#endif
+
 #define TagWordString(index) \
-		fpu_tag_strings[(ctx->FloatSave.TagWord >> ((index) * 2)) & 0b11]
+		fpu_tag_strings[((uint32_t)ctx->FloatSave.TagWord >> ((index) * 2)) & 0b11]
 
 #define FPUReg(index) \
-		*(uint16_t*)&ctx->FloatSave.RegisterArea[(10 * (index)) + sizeof(uint64_t)], *(uint64_t*)&ctx->FloatSave.RegisterArea[10 * (index)]
+		*(uint16_t*)&(((uint8_t*)ctx->FloatSave.RegisterArea)[(10 * (index)) + sizeof(uint64_t)]), *(uint64_t*)&(((uint8_t*)ctx->FloatSave.RegisterArea)[10 * (index)])
 
 
 			if (exception_detail_level & ThExceptionDetailLevel::Extra) {
+#if TH_X86
 				XSAVE_FORMAT* fxsave_ctx = (XSAVE_FORMAT*)ctx->ExtendedRegisters;
+#else
+				XSAVE_FORMAT* fxsave_ctx = (XSAVE_FORMAT*)&ctx->FltSave;
+#endif
 				if (CPU_FCS_FDS_Deprecated()) {
 					log_printf(
 						"\n"
@@ -241,8 +268,15 @@ static void log_print_context(CONTEXT* ctx)
 				, TagWordString(7), FPUReg(7)
 			);
 		}
+#if TH_X64
+#undef FloatSave
+#endif
 		if (exception_detail_level & ThExceptionDetailLevel::SSE) {
+#if TH_X86
 			XSAVE_FORMAT* fxsave_ctx = (XSAVE_FORMAT*)ctx->ExtendedRegisters;
+#else
+			XSAVE_FORMAT* fxsave_ctx = (XSAVE_FORMAT*)&ctx->FltSave;
+#endif
 			log_printf(
 				"\n"
 				"MXCSR: 0x%08X (%s)\n"
@@ -299,7 +333,7 @@ static void log_print_context(CONTEXT* ctx)
 
 static void log_print_rva_and_module(HMODULE mod, void *addr)
 {
-	size_t crash_fn_len = GetModuleFileNameU(mod, NULL, 0) + 1;
+	DWORD crash_fn_len = GetModuleFileNameU(mod, NULL, 0) + 1;
 	VLA(char, crash_fn, crash_fn_len);
 	if (GetModuleFileNameU(mod, crash_fn, crash_fn_len)) {
 		log_printf(
@@ -402,7 +436,7 @@ static void log_print_windows_error_message(LPEXCEPTION_RECORD lpER) {
 		switch (lpER->ExceptionCode) {
 			case EXCEPTION_IN_PAGE_ERROR:
 			case STATUS_ACCESS_VIOLATION: {
-				static constexpr char* access_types[] = {
+				static constexpr const char* access_types[] = {
 					/*EXCEPTION_READ_FAULT*/	"read",
 					/*EXCEPTION_WRITE_FAULT*/	"written",
 					NULL, NULL, NULL, NULL, NULL, NULL,
@@ -467,11 +501,7 @@ void manual_stack_walk(uintptr_t current_esp) {
 		, current_esp, stack_top
 	);
 
-#ifdef TH_X64
-	if (current_esp % 16) {
-#else
 	if (((uintptr_t)stack_top - current_esp) % sizeof(uintptr_t)) {
-#endif
 		log_print(
 			"WARNING: Stack is not aligned, data may be unreliable.\n"
 		);
@@ -513,7 +543,7 @@ void manual_stack_walk(uintptr_t current_esp) {
 		"(Execute Write-Copy)",
 		"(Execute Read Write)"
 	};
-	uint8_t stack_offset_length = snprintf(NULL, 0, "%X", (uintptr_t)(stack_top - 1) - current_esp);
+	uint8_t stack_offset_length = snprintf(NULL, 0, "%zX", (uintptr_t)(stack_top - 1) - current_esp);
 	for (
 		uintptr_t* stack_addr = (uintptr_t*)current_esp;
 		stack_addr < stack_top - 1; // These don't necessarily align cleanly, so array indexing would be tricky to use here
@@ -939,13 +969,27 @@ void manual_stack_walk(uintptr_t current_esp) {
 	}
 }
 
+#ifndef STATUS_NOT_IMPLEMENTED
 #define STATUS_NOT_IMPLEMENTED				((DWORD)0xC0000002L)
+#endif
+#ifndef STATUS_INVALID_LOCK_SEQUENCE
 #define STATUS_INVALID_LOCK_SEQUENCE		((DWORD)0xC000001EL)
+#endif
+#ifndef STATUS_BAD_STACK
 #define STATUS_BAD_STACK					((DWORD)0xC0000028L)
+#endif
+#ifndef STATUS_INVALID_UNWIND_TARGET
 #define STATUS_INVALID_UNWIND_TARGET		((DWORD)0xC0000029L)
+#endif
+#ifndef STATUS_BAD_FUNCTION_TABLE
 #define STATUS_BAD_FUNCTION_TABLE			((DWORD)0xC00000FFL)
+#endif
+#ifndef STATUS_DATATYPE_MISALIGNMENT_ERROR
 #define STATUS_DATATYPE_MISALIGNMENT_ERROR	((DWORD)0xC00002C5L)
+#endif
+#ifndef STATUS_HEAP_CORRUPTION
 #define STATUS_HEAP_CORRUPTION				((DWORD)0xC0000374L)
+#endif
 
 LONG WINAPI exception_filter(LPEXCEPTION_POINTERS lpEI)
 {

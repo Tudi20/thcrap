@@ -11,14 +11,15 @@
 #include <algorithm>
 #include <libs/135tk/Act-Nut-lib/exports.hpp>
 #include "thcrap_tasofro.h"
+#include "mediawiki.h"
 #include "act-nut.h"
 
 void json_object_numkeys_foreach(json_t *obj, std::function<void (int key, json_t *value)> function)
 {
 	std::vector<int> keys;
 
-	for (void *iter = json_object_iter(obj); iter != nullptr; iter = json_object_iter_next(obj, iter)) {
-		const char *key = json_object_iter_key(iter);
+	const char* key;
+	json_object_foreach_key(obj, key) {
 		keys.push_back(atoi(key));
 	}
 
@@ -120,9 +121,9 @@ static void patch_actnut_as_string(ActNut::Object *elem, json_t *json)
 		if (text.length() > 0) {
 			text += "\n";
 		}
-		text += json_string_value(line);
+		text += arabic_convert_bidi(json_string_value(line));
 	}
-	*elem = parse_ruby(text);
+	*elem = parse_mediawiki(text, mwdef_th135);
 }
 
 int patch_act_nut(ActNut::Object *actnutobj, void *file_out, size_t size_out, json_t *patch)

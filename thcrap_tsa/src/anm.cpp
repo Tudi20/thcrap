@@ -72,7 +72,7 @@ void AnmGdiplus::GetPNGEncoderCLSID(void) {
 }
 
 uint8_t* AnmGdiplus::Decode(const uint8_t* data, size_t len, size_t* width, size_t* height) {
-	uint8_t* out = 0;
+	uint8_t* out = NULL;
 
 	IStream* stream = SHCreateMemStream((const BYTE*)data, len);
 	if (!stream) {
@@ -86,8 +86,8 @@ uint8_t* AnmGdiplus::Decode(const uint8_t* data, size_t len, size_t* width, size
 	}
 	defer(delete bitmap);
 
-	int w = bitmap->GetWidth();
-	int h = bitmap->GetHeight();
+	UINT w = bitmap->GetWidth();
+	UINT h = bitmap->GetHeight();
 	Gdiplus::Rect r(0, 0, w, h);
 	Gdiplus::BitmapData bmdata;
 
@@ -101,7 +101,7 @@ uint8_t* AnmGdiplus::Decode(const uint8_t* data, size_t len, size_t* width, size
 
 	char* p = (char*)bmdata.Scan0;
 	char* q = (char*)out;
-	for (int y = 0; y < h; y++) {
+	for (size_t y = 0; y < h; y++) {
 		memcpy(q, p, w * 4);
 		p += bmdata.Stride;
 		q += w * 4;
@@ -654,7 +654,7 @@ script_mods_t entry_mods_t::script_mods(uint8_t *in, anm_offset_t &offset, uint3
 				);
 			}
 			ret.time_changes.emplace_back(script_time_change_t{
-				line_i - deletions_count, (uint16_t)time
+				(unsigned int)(line_i - deletions_count), (uint16_t)time
 			});
 		} else {
 			auto addr = strtol(key_sep + 1, &endptr, 10);
@@ -681,7 +681,7 @@ script_mods_t entry_mods_t::script_mods(uint8_t *in, anm_offset_t &offset, uint3
 			}
 
 			ret.param_changes.emplace_back(script_param_change_t{
-				line_i - deletions_count, (uint16_t)addr, code, code_size
+				(unsigned int)(line_i - deletions_count), (uint16_t)addr, code, code_size
 			});
 		}
 	}

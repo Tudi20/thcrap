@@ -347,7 +347,7 @@ const char* strings_replace(const size_t slot, const char *src, const char *dst)
 
 		// How many bytes are added/removed from the
 		// total length for each substring instance.
-		int length_diff = replacement_len - substr_len;
+		intptr_t length_diff = replacement_len - substr_len;
 
 		char* parse_str = ret.str;
 		while (parse_str = strstr(parse_str, src)) {
@@ -448,13 +448,16 @@ extern "C" int BP_strings_lookup(x86_reg_t * regs, json_t * bp_info)
 }
 /// -------------------
 
-void strings_mod_init(void)
+extern "C" {
+
+TH_EXPORT void strings_mod_init(void)
 {
 	jsondata_add("stringdefs.js");
 	stringlocs_reparse();
 }
 
-void strings_mod_detour(void)
+// Adds string lookup wrappers to functions that don't have them yet.
+TH_EXPORT void strings_mod_detour(void)
 {
 	detour_chain("user32.dll", 1,
 		"MessageBoxA", strings_MessageBoxA, &chain_MessageBoxU,
@@ -467,7 +470,8 @@ void strings_mod_detour(void)
 	);
 }
 
-void strings_mod_repatch(json_t *files_changed)
+//void strings_mod_repatch(const char* files_changed[]);
+TH_EXPORT void strings_mod_repatch(json_t *files_changed)
 {
 	const char *key;
 	json_object_foreach_key(files_changed, key) {
@@ -478,11 +482,13 @@ void strings_mod_repatch(json_t *files_changed)
 	}
 }
 
-void strings_mod_exit(void)
+TH_EXPORT void strings_mod_exit(void)
 {
 	for(auto& i : strings_storage) {
 		SAFE_FREE(i.second.str);
 	}
 	strings_storage.clear();
 	stringlocs.clear();
+}
+
 }

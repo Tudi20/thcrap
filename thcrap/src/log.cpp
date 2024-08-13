@@ -9,6 +9,7 @@
 
 #include "thcrap.h"
 #include <queue>
+#include <array>
 
 // -------
 // Globals
@@ -16,16 +17,18 @@
 
 struct log_string_t {
 	const char* str;
-	size_t n;
+	uint32_t n;
 	bool is_n;
+
+	inline constexpr log_string_t(const char* str, uint32_t n, bool is_n) : str(str), n(n), is_n(is_n) {}
 };
 
 static HANDLE log_file = INVALID_HANDLE_VALUE;
 static bool console_open = false;
 static HANDLE log_thread_handle = INVALID_HANDLE_VALUE;
 static std::queue<log_string_t> log_queue;
-static CRITICAL_SECTION queue_cs = {};
-static HANDLE log_semaphore = INVALID_HANDLE_VALUE;
+static SRWLOCK queue_srwlock = { SRWLOCK_INIT };
+static volatile bool log_is_empty = true;
 static bool async_enabled = false;
 
 // Config
@@ -34,8 +37,8 @@ DWORD log_async = true;
 // For checking nested thcrap instances that access the same log file.
 // We only want to print an error message for the first instance.
 static HANDLE log_filemapping = INVALID_HANDLE_VALUE;
-static const char LOG[] = "logs/thcrap_log.txt";
-static const char LOG_ROTATED[] = "logs/thcrap_log.%d.txt";
+static constexpr char LOG[] = "logs/thcrap_log.txt";
+static constexpr char LOG_ROTATED[] = "logs/thcrap_log.%d.txt";
 static constexpr int ROTATIONS = 5; // Number of backups to keep
 static void (*log_print_hook)(const char*) = NULL;
 static void(*log_nprint_hook)(const char*, size_t) = NULL;
@@ -98,63 +101,67 @@ void log_rotate(void)
 }
 // --------
 
-static void log_print_real(const log_string_t& log_str) {
+static void log_print_real(const char* str, uint32_t n, bool is_n) {
 	static DWORD byteRet;
-	if (console_open) {
-		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), log_str.str, log_str.n, &byteRet, NULL);
+	if unexpected(console_open) {
+		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), str, n, &byteRet, NULL);
 	}
-	if (log_file) {
-		WriteFile(log_file, log_str.str, log_str.n, &byteRet, NULL);
+	if (HANDLE file = log_file) {
+		WriteFile(file, str, n, &byteRet, NULL);
 	}
-	if (log_str.is_n) {
-		if (log_nprint_hook) {
-			log_nprint_hook(log_str.str, log_str.n);
+	if (!is_n) {
+		if (auto func = log_print_hook) {
+			func(str);
 		}
 	} else {
-		if (log_print_hook) {
-			log_print_hook(log_str.str);
+		if (auto func = log_nprint_hook) {
+			func(str, n);
 		}
 	}
 }
 
 static DWORD WINAPI log_thread(LPVOID lpParameter) {
 	for (;;) {
-		EnterCriticalSection(&queue_cs);
+		AcquireSRWLockExclusive(&queue_srwlock);
 		if (log_queue.empty()) {
-			LeaveCriticalSection(&queue_cs);
-			WaitForSingleObject(log_semaphore, INFINITE);
+			log_is_empty = true;
+			ReleaseSRWLockExclusive(&queue_srwlock);
+			while (log_is_empty) Sleep(10);
 		} else {
 			log_string_t log_str = std::move(log_queue.front());
 			log_queue.pop();
-			LeaveCriticalSection(&queue_cs);
+			ReleaseSRWLockExclusive(&queue_srwlock);
 
-			log_print_real(log_str);
+			log_print_real(log_str.str, log_str.n, log_str.is_n);
 			free((void*)log_str.str);
 		}
 	}
 }
 
-static void log_push(const char* str, size_t n, bool is_n) {
+static void log_push(const char* str, uint32_t n, bool is_n) {
 	if (async_enabled) {
-		const char* new_str = strdup_size(str, n);
-		EnterCriticalSection(&queue_cs);
-		log_queue.emplace(log_string_t{ new_str, n, is_n });
-		LeaveCriticalSection(&queue_cs);
-		ReleaseSemaphore(log_semaphore, 1, NULL);
+		char* new_str = (char*)malloc(n + 1);
+		new_str[n] = '\0';
+		memcpy(new_str, str, n);
+		AcquireSRWLockExclusive(&queue_srwlock);
+		log_queue.emplace(new_str, n, is_n);
+
+		log_is_empty = false;
+		ReleaseSRWLockExclusive(&queue_srwlock);
 	} else {
-		log_print_real(log_string_t{ str, n, is_n });
+		log_print_real(str, n, is_n);
 	}
 }
 
-void log_nprint(const char* str, size_t n) {
-	log_push(str, strnlen(str, n), true);
+void log_nprint(const char* str, uint32_t n) {
+	log_push(str, (uint32_t)strnlen(str, n), true);
 }
 
 void log_print(const char *str) {
-	log_push(str, strlen(str), false);
+	log_push(str, (uint32_t)strlen(str), false);
 }
 
-void log_vprintf(const char *format, va_list va) {
+inline void log_vprintf(const char *format, va_list va) {
 	va_list va2;
 	va_copy(va2, va);
 	const int total_size = vsnprintf(NULL, 0, format, va2);
@@ -176,14 +183,14 @@ void log_printf(const char *format, ...) {
 
 void log_flush() {
 	if (async_enabled) {
-	EnterCriticalSection(&queue_cs);
+	AcquireSRWLockExclusive(&queue_srwlock);
 		while (!log_queue.empty()) {
 			log_string_t log_str = std::move(log_queue.front());
 			log_queue.pop();
-			log_print_real(log_str);
+			log_print_real(log_str.str, log_str.n, log_str.is_n);
 			free((void*)log_str.str);
 		}
-	LeaveCriticalSection(&queue_cs);
+	ReleaseSRWLockExclusive(&queue_srwlock);
 	}
 	FlushFileBuffers(GetStdHandle(STD_OUTPUT_HANDLE));
 	FlushFileBuffers(log_file);
@@ -342,6 +349,23 @@ std::nullptr_t logger_t::errorf(const char *format, ...) const
 }
 /// ------------------
 
+#if CPP20
+static auto line = []() consteval {
+	constexpr char8_t dash_char[] = u8"―";
+	constexpr char project_name[] = "Touhou Community Reliant Automatic Patcher";
+	constexpr char logfile_str[] = " logfile";
+	constexpr size_t bytes_per_dash = sizeof(dash_char) - 1;
+	constexpr size_t width = sizeof(project_name) - 1 + sizeof(logfile_str) - 1;
+	std::array<char8_t, bytes_per_dash * width + 1> ret = {};
+	for (size_t i = 0; i < width; ++i) {
+		for (size_t j = 0; j < bytes_per_dash; ++j) {
+			ret[i * bytes_per_dash + j] = dash_char[j];
+		}
+	}
+	return ret;
+}();
+#endif
+
 void log_init(int console)
 {
 	CreateDirectoryU("logs", NULL);
@@ -353,6 +377,7 @@ void log_init(int console)
 	log_file = CreateFileU(LOG, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if(log_file) {
 
+#if !CPP20
 		constexpr std::string_view DashUChar = u8"―";
 
 		const size_t line_len = (strlen(PROJECT_NAME) + strlen(" logfile")) * DashUChar.length();
@@ -362,13 +387,20 @@ void log_init(int console)
 		for (size_t i = 0; i < line_len; i += DashUChar.length()) {
 			memcpy(&line[i], DashUChar.data(), DashUChar.length());
 		}
+#endif
 
-		log_printf("%s\n", line);
-		log_printf("%s logfile\n", PROJECT_NAME);
-		log_printf("Branch: %s\n", PROJECT_BRANCH);
-		log_printf("Version: %s\n", PROJECT_VERSION_STRING);
+		log_printf(
+			"%s\n"
+			"%s logfile\n"
+			"Branch: %s\n"
+			"Version: %s\n"
+			, &line[0]
+			, PROJECT_NAME
+			, PROJECT_BRANCH
+			, PROJECT_VERSION_STRING
+		);
 		{
-			const char* months[] = {
+			static constexpr const char* months[] = {
 				"Invalid",
 				"Jan",
 				"Feb",
@@ -390,20 +422,30 @@ void log_init(int console)
 				months[time.wMonth], time.wDay, time.wYear,
 				time.wHour, time.wMinute, time.wSecond);
 		}
-		log_printf("Build time: "  __DATE__ " " __TIME__ "\n");
 #if defined(BUILDER_NAME_W)
 		{
-			const wchar_t *builder = BUILDER_NAME_W;
+			static constexpr wchar_t builder[] = BUILDER_NAME_W;
 			UTF8_DEC(builder);
 			UTF8_CONV(builder);
-			log_printf("Built by: %s\n", builder_utf8);
+			log_printf(
+				"Build time: "  __DATE__ " " __TIME__ "\n"
+				"Built by: %s\n"
+				, builder_utf8
+			);
 			UTF8_FREE(builder);
 		}
 #elif defined(BUILDER_NAME)
-		log_printf("Built by: %s\n", BUILDER_NAME);
+		log_printf(
+			"Build time: "  __DATE__ " " __TIME__ "\n"
+			"Built by: %s\n"
+			, BUILDER_NAME
+		);
 #endif
-		log_printf("Command line: %s\n", GetCommandLineU());
-		log_print("\nSystem Information:\n");
+		log_printf(
+			"Command line: %s\n"
+			"\nSystem Information:\n"
+			, GetCommandLineU()
+		);
 
 		{
 			char cpu_brand[48] = {};
@@ -431,7 +473,7 @@ void log_init(int console)
 				++div_count_left;
 			}
 
-			const char* size_units[] = {
+			static constexpr const char* size_units[] = {
 				"B",
 				"KiB",
 				"MiB",
@@ -447,18 +489,21 @@ void log_init(int console)
 			);
 		}
 
-		log_printf("OS/Runtime: %s\n", windows_version());
-		log_printf("Code pages: ANSI=%u, OEM=%u\n", GetACP(), GetOEMCP());
-
-		log_print("\nScreens:\n");
+		log_printf(
+			"OS/Runtime: %s\n"
+			"Code pages: ANSI=%u, OEM=%u\n"
+			"\nScreens:\n"
+			, windows_version()
+			, GetACP(), GetOEMCP()
+		);
 
 		{
 			DISPLAY_DEVICEA display_device = { sizeof(display_device) };
-			for (int i = 0;
+			for (
+				DWORD i = 0;
 				EnumDisplayDevicesA(NULL, i, &display_device, EDD_GET_DEVICE_INTERFACE_NAME);
-				i++
-				)
-			{
+				++i
+			) {
 				if (display_device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) {
 					DISPLAY_DEVICEA mon = { sizeof(mon) };
 					if (!EnumDisplayDevicesA(display_device.DeviceName, 0, &mon, EDD_GET_DEVICE_INTERFACE_NAME)) {
@@ -476,10 +521,12 @@ void log_init(int console)
 			}
 		}
 
-		log_printf("%s\n\n", line);		
+		log_printf("%s\n\n", &line[0]);
 		
 		FlushFileBuffers(log_file);
+#if !CPP20
 		VLA_FREE(line);
+#endif
 	}
 	if (console) {
 		OpenConsole();
@@ -516,8 +563,6 @@ void log_init(int console)
 		}
 	}
 	if (log_async) {
-		InitializeCriticalSection(&queue_cs);
-		log_semaphore = CreateSemaphoreW(NULL, 0, 1, NULL);
 		log_thread_handle = CreateThread(0, 0, log_thread, NULL, 0, NULL);
 		async_enabled = true;
 	}
@@ -527,12 +572,10 @@ void log_exit(void) {
 	log_flush();
 	if (async_enabled) {
 		TerminateThread(log_thread_handle, 0);
-		DeleteCriticalSection(&queue_cs);
-		CloseHandle(log_semaphore);
-		log_semaphore = INVALID_HANDLE_VALUE;
 	}
-	if (console_open)
+	if (console_open) {
 		FreeConsole();
+	}
 	if (log_file) {
 		CloseHandle(log_filemapping);
 		CloseHandle(log_file);

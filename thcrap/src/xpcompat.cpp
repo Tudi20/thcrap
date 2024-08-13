@@ -56,7 +56,7 @@ void TH_STDCALL XP_ReleaseSRWLockShared(PSRWLOCK SRWLock)
 
 static int swrlock_init = []
 {
-	auto kernel32 = GetModuleHandleA("kernel32.dll");
+	auto kernel32 = GetModuleHandleW(L"kernel32.dll");
 	AcquireSRWLockExclusive = (srwlock_func_t *)GetProcAddress(kernel32, "AcquireSRWLockExclusive");
 	ReleaseSRWLockExclusive = (srwlock_func_t *)GetProcAddress(kernel32, "ReleaseSRWLockExclusive");
 	AcquireSRWLockShared = (srwlock_func_t *)GetProcAddress(kernel32, "AcquireSRWLockShared");
@@ -74,6 +74,42 @@ static int swrlock_init = []
 }();
 /// ------------------------
 
+HRESULT STDAPICALLTYPE PathMatchSpecExW_init(LPCWSTR pszFile, LPCWSTR pszSpec, DWORD dwFlags);
+HRESULT STDAPICALLTYPE PathMatchSpecExU_init(LPCSTR pszFile, LPCSTR pszSpec, DWORD dwFlags);
+
+HRESULT STDAPICALLTYPE PathMatchSpecExW_xp(LPCWSTR pszFile, LPCWSTR pszSpec, DWORD dwFlags) {
+	return !PathMatchSpecW(pszFile, pszSpec);
+}
+HRESULT STDAPICALLTYPE PathMatchSpecExU_xp(LPCSTR pszFile, LPCSTR pszSpec, DWORD dwFlags) {
+	return !PathMatchSpecU(pszFile, pszSpec);
+}
+
+static void initialize_path_match_spec_ex() {
+	HMODULE shlwapi_module = GetModuleHandleW(L"shlwapi.dll");
+	if unexpected(!shlwapi_module) {
+		shlwapi_module = LoadLibraryW(L"shlwapi.dll");
+	}
+	if (void* func_ex_w = (void*)GetProcAddress(shlwapi_module, "PathMatchSpecExW")) {
+		PathMatchSpecExW_func = (PathMatchSpecExW_t)func_ex_w;
+		PathMatchSpecExU_func = &PathMatchSpecExU;
+	} else {
+		PathMatchSpecExW_func = &PathMatchSpecExW_xp;
+		PathMatchSpecExU_func = &PathMatchSpecExU_xp;
+	}
+}
+
+PathMatchSpecExW_t PathMatchSpecExW_func = &PathMatchSpecExW_init;
+PathMatchSpecExU_t PathMatchSpecExU_func = &PathMatchSpecExU_init;
+
+HRESULT STDAPICALLTYPE PathMatchSpecExW_init(LPCWSTR pszFile, LPCWSTR pszSpec, DWORD dwFlags) {
+	initialize_path_match_spec_ex();
+	return PathMatchSpecExW_func(pszFile, pszSpec, dwFlags);
+}
+HRESULT STDAPICALLTYPE PathMatchSpecExU_init(LPCSTR pszFile, LPCSTR pszSpec, DWORD dwFlags) {
+	initialize_path_match_spec_ex();
+	return PathMatchSpecExU_func(pszFile, pszSpec, dwFlags);
+}
+
 /// Thread-local structures
 /// -----------------------
 inline void tlsstruct_default_ctor(void *instance, size_t struct_size)
@@ -88,9 +124,10 @@ void* tlsstruct_get(DWORD slot, size_t struct_size, tlsstruct_ctor_t *ctor)
 		ret = malloc(struct_size);
 		if(ret) {
 			if(ctor == nullptr) {
-				ctor = tlsstruct_default_ctor;
+				tlsstruct_default_ctor(ret, struct_size);
+			} else {
+				ctor(ret, struct_size);
 			}
-			ctor(ret, struct_size);
 		}
 		TlsSetValue(slot, ret);
 	}

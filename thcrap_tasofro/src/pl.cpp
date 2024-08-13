@@ -9,6 +9,7 @@
 
 #include <thcrap.h>
 #include "thcrap_tasofro.h"
+#include "mediawiki.h"
 #include "pl.h"
 
 void TasofroPl::readField(const char *in, size_t& pos, size_t size, std::string& out)
@@ -210,7 +211,7 @@ std::string TasofroPl::ALine::quote(const std::string& in) const
 	}
 	out += '"';
 
-	return parse_ruby(out);
+	return parse_mediawiki(out, mwdef_th135);
 }
 
 const std::string& TasofroPl::ALine::get(int n) const
@@ -564,7 +565,7 @@ void TasofroPl::WinText::beginLine(std::list<ALine*>& file, const std::list<ALin
 
 void TasofroPl::AText::patchLine(const char *text, std::list<ALine*>& file, const std::list<ALine*>::iterator& it)
 {
-	std::string formattedText = text;
+	std::string formattedText = arabic_convert_bidi(text);
 	if (this->cur_line == this->nb_lines) {
 		if (this->last_char.empty() == false) {
 			formattedText += this->last_char;
@@ -648,15 +649,12 @@ void TasofroPl::EndingText::endLine()
 
 json_t *TasofroPl::balloonNumberToLines(json_t *patch, size_t balloon_number)
 {
-	json_t *json_line_data;
-	json_t *json_lines;
-
-	json_line_data = json_object_numkey_get(patch, balloon_number);
+	json_t* json_line_data = json_object_numkey_get(patch, balloon_number);
 	if (!json_is_object(json_line_data)) {
 		return nullptr;
 	}
 
-	json_lines = json_object_get(json_line_data, "lines");
+	json_t* json_lines = json_object_get(json_line_data, "lines");
 	if (!json_is_array(json_lines)) {
 		return nullptr;
 	}
@@ -745,10 +743,6 @@ int patch_pl(void *file_inout, size_t size_out, size_t size_in, const char *, js
 		dynamic_cast<TasofroPl::AText*>(line)->patch(lines, it, balloonOwner, json_lines);
 	}
 
-#if 0
-	size_t size_out_orig = size_out;
-#endif
-
 	std::string str;
 	for (TasofroPl::ALine* line : lines) {
 		str = line->toString();
@@ -764,10 +758,6 @@ int patch_pl(void *file_inout, size_t size_out, size_t size_in, const char *, js
 		size_out -= 2;
 	}
 	*file_out = '\0';
-
-#if 0
-	file_write(fn, file_inout, size_out_orig - size_out);
-#endif
 
 	return 1;
 }

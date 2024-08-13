@@ -10,6 +10,7 @@
 #pragma once
 
 #include <thcrap.h>
+#include "vfs.h"
 #include "thcrap_tasofro.h"
 
 #pragma pack(push, 1)
@@ -31,5 +32,8 @@ size_t get_tfcs_size(const char*, json_t*, size_t patch_size);
 size_t get_csv_size(const char*, json_t*, size_t patch_size);
 
 #ifdef __cplusplus
+
+json_t* th105_spellcomment_generator(const jsonvfs_map& in_data, std::string_view out_fn, size_t& out_size);
+
 }
 #endif

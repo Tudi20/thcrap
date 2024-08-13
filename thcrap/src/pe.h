@@ -14,6 +14,18 @@ typedef struct {
 	UINT_PTR func;
 } exported_func_t;
 
+typedef enum {
+	SHOULD_LOAD = 0,
+	NOT_PLUGIN = 1,
+	WRONG_ARCH = 2,
+	NOT_A_DLL = 3,
+	ALREADY_LOADED = 4
+} PluginValidation;
+
+// Checks if DLL located at [path] is a valid
+// thcrap plugin that needs to be initialized.
+PluginValidation validate_plugin_dll_for_load(const char* const path);
+
 // Checks if DLL located at [path] contains the function [func_name] without loading the DLL.
 // Copied: https://github.com/touhouworldcup/thprac/blob/dde0bda25081d5df4fab73c104cc952dcaddcf18/thprac/src/thprac/thprac_launcher_games.cpp#L1716
 bool CheckDLLFunction(const char* const path, const char* const func_name);
@@ -43,7 +55,7 @@ TH_CALLER_FREE exported_func_t* GetExportedFunctions(HMODULE hDll);
 
 // Shorthand for GetModuleHandleEx() with GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS.
 // Returns a nullptr on failure.
-HMODULE GetModuleContaining(void *addr);
+THCRAP_INTERNAL_API HMODULE GetModuleContaining(void *addr);
 /// -----
 
 /// Remote

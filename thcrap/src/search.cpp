@@ -35,10 +35,14 @@ static int SearchCheckExe(search_state_t& state, const fs::directory_entry &ent)
 	int ret = 0;
 	game_version *ver = identify_by_size((size_t)ent.file_size(), state.versions);
 	if(ver) {
+#if !CPP20
 		std::string exe_fn = ent.path().generic_u8string();
+#else
+		std::u8string exe_fn = ent.path().generic_u8string();
+#endif
 		size_t file_size = (size_t)ent.file_size();
 		identify_free(ver);
-		ver = identify_by_hash(exe_fn.c_str(), &file_size, state.versions);
+		ver = identify_by_hash((const char*)exe_fn.c_str(), &file_size, state.versions);
 		if(!ver) {
 			return ret;
 		}
@@ -74,14 +78,22 @@ static int SearchCheckExe(search_state_t& state, const fs::directory_entry &ent)
 			state.found.push_back(result);
 
 			if (use_vpatch) {
+#if !CPP20
 				std::string vpatch_path = vpatch_fn.generic_u8string();
+#else
+				std::u8string vpatch_path = vpatch_fn.generic_u8string();
+#endif
 				if (std::none_of(state.found.begin(), state.found.end(), [vpatch_path](const game_search_result& it) {
+#if !CPP20
 					return vpatch_path == it.path;
-					})) {
+#else
+					return vpatch_path == (const char8_t*)it.path;
+#endif
+				})) {
 					game_search_result result_vpatch = result.copy();
 					free(result_vpatch.path);
 					free(result_vpatch.description);
-					result_vpatch.path = strdup(vpatch_path.c_str());
+					result_vpatch.path = strdup((const char*)vpatch_path.c_str());
 					result_vpatch.description = strdup("using vpatch");
 					state.found.push_back(result_vpatch);
 				}
@@ -106,7 +118,7 @@ static DWORD WINAPI SearchThread(void *param_)
 				return 0;
 			try {
 				if (ent.is_regular_file()
-					&& PathMatchSpecW(ent.path().c_str(), L"*.exe")
+					&& PathMatchSpecExW(ent.path().c_str(), L"*.exe", PMSF_NORMAL) == S_OK
 					&& ent.file_size() >= state->size_min
 					&& ent.file_size() <= state->size_max)
 				{
@@ -175,7 +187,7 @@ bool compare_search_results(const game_search_result& a, const game_search_resul
 game_search_result* SearchForGames(const wchar_t **dir, const games_js_entry *games_in)
 {
 	search_state_t state;
-	const char *versions_js_fn = "versions.js";
+	const char *versions_js_fn = "versions" VERSIONS_SUFFIX ".js";
 
 	state.versions = stack_json_resolve(versions_js_fn, NULL);
 	if(!state.versions) {
@@ -291,22 +303,27 @@ static std::wstring GetValueFromKey(HKEY key, LPCWSTR subkey, LPCWSTR valueName)
 
 	do {
 		value.resize(valueSize);
+		valueSize *= sizeof(WCHAR);
 		ret = RegQueryValueExW(hSub, valueName, 0, &type, (LPBYTE)value.data(), &valueSize);
+		valueSize /= sizeof(WCHAR);
 	} while (ret == ERROR_MORE_DATA);
 	RegCloseKey(hSub);
 	if (ret != ERROR_SUCCESS || type != REG_SZ) {
 		return L"";
 	}
 
+	if (value[valueSize - 1] == '\0') {
+		valueSize--;
+	}
 	return std::wstring(value.data(), valueSize);
 }
 
 static bool FilterOnKey(HKEY key, LPCWSTR subkey)
 {
-	std::wstring displayName = GetValueFromKey(key, subkey, L"DisplayName");
+	std::wstring publisher = GetValueFromKey(key, subkey, L"Publisher");
 
-	return displayName.compare(0, wcslen(L"東方"), L"東方") == 0
-		|| displayName.compare(0, wcslen(L"弾幕アマノジャク"), L"弾幕アマノジャク") == 0;
+	return publisher == L"上海アリス幻樂団"
+		|| publisher == L"黄昏フロンティア";
 }
 
 static std::vector<wchar_t*> FindInstalledGamesDir()

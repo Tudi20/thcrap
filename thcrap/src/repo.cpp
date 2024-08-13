@@ -36,7 +36,7 @@ repo_t *RepoLoadJson(json_t *repo_js)
 	json_t *patches = json_object_get(repo_js, "patches");
 	if (json_is_object(patches)) {
 		if (size_t patch_count = json_object_size(patches)) {
-			repo->patches = new repo_patch_t[patch_count + 1];
+			repo->patches = (repo_patch_t*)malloc(sizeof(repo_patch_t) * (patch_count + 1));
 			repo->patches[patch_count].patch_id = NULL;
 
 			const char* patch_id;
@@ -105,10 +105,10 @@ bool RepoWrite(const repo_t *repo)
 		std::filesystem::create_directories(repo_dir);
 	}
 	catch (std::filesystem::filesystem_error e) {
-		log_printf("Failed to create repo folder %s.\nError %d: %s\n", repo_dir.u8string().c_str(), e.code().value(), e.what());
+		log_printf("Failed to create repo folder %s.\nError %d: %s\n", (const char*)repo_dir.u8string().c_str(), e.code().value(), e.what());
 		return false;
 	}
-	int ret = json_dump_file(repo_js, repo_path.u8string().c_str(), JSON_INDENT(4)) == 0;
+	int ret = json_dump_file(repo_js, (const char*)repo_path.u8string().c_str(), JSON_INDENT(4)) == 0;
 	json_decref(repo_js);
 	return ret;
 }
@@ -139,7 +139,7 @@ void RepoFree(repo_t *repo)
 				free(repo->patches[i].patch_id);
 				free(repo->patches[i].title);
 			}
-			delete[] repo->patches;
+			free(repo->patches);
 		}
 
 		free(repo);
@@ -153,12 +153,12 @@ repo_t *RepoLocalNext(HANDLE *hFind)
 	BOOL find_ret = 0;
 	if(*hFind == NULL) {
 		// Too bad we can't do "*/repo.js" or something similar.
-		*hFind = FindFirstFile("repos/*", &w32fd);
+		*hFind = FindFirstFileU("repos/*", &w32fd);
 		if(*hFind == INVALID_HANDLE_VALUE) {
 			return NULL;
 		}
 	} else {
-		find_ret = W32_ERR_WRAP(FindNextFile(*hFind, &w32fd));
+		find_ret = W32_ERR_WRAP(FindNextFileU(*hFind, &w32fd));
 	}
 	while(!find_ret) {
 		if(
@@ -175,7 +175,7 @@ repo_t *RepoLocalNext(HANDLE *hFind)
 				return repo;
 			}
 		}
-		find_ret = W32_ERR_WRAP(FindNextFile(*hFind, &w32fd));
+		find_ret = W32_ERR_WRAP(FindNextFileU(*hFind, &w32fd));
 	};
 	FindClose(*hFind);
 	return NULL;

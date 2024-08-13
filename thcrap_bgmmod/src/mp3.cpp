@@ -12,7 +12,7 @@
 
 #include <libmpg123/mpg123.h>
 
-#pragma comment(lib, "libmpg123" DEBUG_OR_RELEASE)
+#pragma comment(lib, "libmpg123" FILE_SUFFIX)
 
 auto mp3_l = bgmmod_format_log("MP3");
 
@@ -84,15 +84,12 @@ std::unique_ptr<pcm_part_t> mp3_open(HANDLE &&stream)
 	int err;
 
 	auto fail = [&] (const char* text, int err) {
-		va_list va;
-		va_start(va, text);
 		if(err != MPG123_OK) {
 			auto err_str = mpg123_plain_strerror(err);
 			mp3_l.errorf("%s: %s", text, err_str);
 		} else {
 			mp3_l.errorf("%s", text);
 		}
-		va_end(va);
 		if(mh) {
 			mpg123_delete(mh);
 		} else {

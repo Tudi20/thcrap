@@ -236,24 +236,25 @@ typedef union {
 // Returns a pointer to the character following the parsed patch value or NULL on error.
 // [regs] is either the current register structure if called from a breakpoint or null.
 // [rel_source] is the address used when computing a relative value.
-const char* get_patch_value(const char* expr, patch_val_t* out, x86_reg_t* regs, uintptr_t rel_source, HMODULE hMod);
+THCRAP_API const char* get_patch_value(const char* expr, patch_val_t* out, x86_reg_t* regs, uintptr_t rel_source, HMODULE hMod);
 
 bool CPU_Supports_SHA(void);
 bool CPU_FDP_ErrorOnly(void);
 bool CPU_FCS_FDS_Deprecated(void);
 THCRAP_API bool OS_is_wine(void);
+bool CPU_Supports_LMLSAHF(void);
 
 void DisableCodecaveNotFoundWarning(bool state);
 
 // Returns a pointer to the register [regname] in [regs]. [endptr] behaves
 // like the endptr parameter of strtol(), and can be a nullptr if not needed.
-uint32_t* reg(x86_reg_t *regs, const char *regname, const char **endptr);
+THCRAP_INTERNAL_API uint32_t* reg(x86_reg_t *regs, const char *regname, const char **endptr);
 
 // Parses [expr], a string containing an expression terminated by [end].
 // Returns a pointer to the character following the parsed expression or NULL on error.
 // [regs] is either the current register structure if called from a breakpoint or null.
 // [rel_source] is the address used when computing a relative value.
-const char* TH_FASTCALL eval_expr(const char* expr, char end, size_t* out, x86_reg_t* regs, uintptr_t rel_source, HMODULE hMod);
+THCRAP_API const char* TH_FASTCALL eval_expr(const char* expr, char end, size_t* out, x86_reg_t* regs, uintptr_t rel_source, HMODULE hMod);
 
 void patch_val_set_op(const char* op_str, patch_val_t* Val);
 
@@ -274,20 +275,35 @@ patch_val_t patch_val_op_str(const char* op_str, patch_val_t Val1, patch_val_t V
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if TH_X86
 	extern uint64_t TH_FASTCALL str_to_addr_impl(uintptr_t base_addr, const char* str);
+#else
+	typedef struct {
+		__m128i value;
+		__m128i ptr;
+	} str_to_addr_ret;
+	extern str_to_addr_ret TH_VECTORCALL str_to_addr_impl(uintptr_t base_addr, const char* str);
+#endif
 #ifdef __cplusplus
 }
 
 extern "C++" {
 template <typename T>
 static TH_FORCEINLINE size_t str_to_addr(const char* str, const char*& end_str, T base_addr) {
+#if TH_X86
 	uint64_t temp = str_to_addr_impl(base_addr ? (uintptr_t)base_addr : CurrentImageBase, str);
 	end_str = (const char*)(temp >> 32);
 	return (size_t)temp;
+#else
+	str_to_addr_ret temp = str_to_addr_impl(base_addr ? (uintptr_t)base_addr : CurrentImageBase, str);
+	size_t ret = *(size_t*)&temp.value;
+	end_str = *(const char**)&temp.ptr;
+	return ret;
+#endif
 }
 template <typename T>
 static TH_FORCEINLINE size_t str_to_addr(const char* str, T base_addr) {
-	return (size_t)str_to_addr_impl(base_addr ? (uintptr_t)base_addr : CurrentImageBase, str);
+	return (size_t)((uint64_t(TH_FASTCALL*)(uintptr_t, const char*))str_to_addr_impl)(base_addr ? (uintptr_t)base_addr : CurrentImageBase, str);
 }
 }
 #endif

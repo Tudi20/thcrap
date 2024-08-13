@@ -302,7 +302,7 @@ void replace_line(char *dst, patch_msg_state_t *state, const stringref_t &rep)
 		&& state->cur_line < elementsof(state->line_widths)
 	) {
 		if(state->cur_line == 0) {
-			log_printf("💬\n");
+			log_print("💬\n");
 		}
 		size_t font_id = (size_t)json_integer_value(state->font_dialog_id);
 		size_t width = GetTextExtentForFontID(dst, font_id);
@@ -348,7 +348,7 @@ int replace_next_diff_line(th06_msg_t *cmd_out, patch_msg_state_t *state, replac
 
 	// If we don't have a diff_lines pointer, this is the first line of a new box.
 	if(cur_op && !json_is_array(state->diff_lines)) {
-		size_t key_str_len = strlen(cur_op->type) + 32;
+		size_t key_str_len = (cur_op->type ? strlen(cur_op->type) : 0) + 32;
 		VLA(char, key_str, key_str_len);
 		state->ind++;
 		format_slot_key(key_str, state->time, cur_op->type, state->ind);
@@ -454,7 +454,7 @@ void box_end(patch_msg_state_t *state)
 				(overhang < 0.0f ? -overhang : overhang) , side_str
 			);
 		}
-		log_printf("\n"); // for better log readability
+		log_print("\n"); // for better log readability
 		state->bubble_pos = NULL;
 	}
 	state->cur_line = 0;
@@ -731,7 +731,7 @@ int patch_end_th06(void *file_inout, size_t size_out, size_t size_in, const char
 			if (!lines) {
 				while (!is_at_sign(orig_file, orig_file_copy) && advanced_bytes < size_in) {
 					size_t orig_line_len = strlen(orig_file);
-					strcpy(new_end, orig_file);
+					memcpy(new_end, orig_file, orig_line_len + 1);
 					orig_file += orig_line_len + 2;
 					new_end += orig_line_len + 1;
 					*new_end = '\n';
@@ -748,8 +748,7 @@ int patch_end_th06(void *file_inout, size_t size_out, size_t size_in, const char
 				const char *line_str = json_string_value(line);
 				if (line_str) {
 					size_t new_line_len = strlen(line_str);
-					strcpy(new_end, line_str);
-					new_end[new_line_len] = '\0';
+					memcpy(new_end, line_str, new_line_len + 1);
 					new_end[new_line_len + 1] = '\n';
 					new_end += new_line_len + 2;
 				}

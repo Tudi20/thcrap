@@ -73,11 +73,21 @@ extern uint64_t __cdecl _aullshr(uint64_t, uint8_t);
 
 using math_1arg_ptr = double(__cdecl*)(double);
 using math_2arg_ptr = double(__cdecl*)(double, double);
+using math_2arg_ptr_alt = double(__cdecl*)(double, int);
 using math_3arg_ptr = double(__cdecl*)(double, double, double);
 using math_remquo_ptr = double(__cdecl*)(double, double, int*);
 using memchr_ptr = const void*(__cdecl*)(const void*, int, size_t);
+using wmemchr_ptr = const wchar_t*(__cdecl*)(const wchar_t*, wchar_t, size_t);
 using strchr_ptr = const char*(__cdecl*)(const char*, int);
 using strstr_ptr = const char*(__cdecl*)(const char*, const char*);
+using strpbrk_ptr = const char*(__cdecl*)(const char*, const char*);
+using wcschr_ptr = const wchar_t*(__cdecl*)(const wchar_t*, wchar_t);
+using wcsstr_ptr = const wchar_t*(__cdecl*)(const wchar_t*, const wchar_t*);
+using wcspbrk_ptr = const wchar_t*(__cdecl*)(const wchar_t*, const wchar_t*);
+using swprintf_ptr = int(__cdecl*)(wchar_t*, const wchar_t*, ...);
+using vswprintf_ptr = int(__cdecl*)(wchar_t*, const wchar_t*, va_list);
+using snwprintf_ptr = int(__cdecl*)(wchar_t*, size_t, const wchar_t*, ...);
+using vsnwprintf_ptr = int(__cdecl*)(wchar_t*, size_t, const wchar_t*, va_list);
 
 // Pointer casting is used to select the C style overload
 static std::unordered_map<std::string_view, uintptr_t> funcs = {
@@ -96,38 +106,54 @@ static std::unordered_map<std::string_view, uintptr_t> funcs = {
 	// Memory functions
 	{ "th_memcpy", (uintptr_t)&memcpy },
 	{ "th_memmove", (uintptr_t)&memmove },
-	{ "th_memcmp", (uintptr_t)&memcmp },
+	{ "th_memcmp", (uintptr_t)&memcmp }, { "th_wmemcmp", (uintptr_t)&wmemcmp },
 	{ "th_memset", (uintptr_t)&memset },
 	{ "th_memccpy", (uintptr_t)&memccpy },
-	{ "th_memchr", (uintptr_t)static_cast<memchr_ptr>(&memchr) },
-	{ "th_strdup", (uintptr_t)&strdup },
+	{ "th_memchr", (uintptr_t)static_cast<memchr_ptr>(&memchr) }, { "th_wmemchr", (uintptr_t)static_cast<wmemchr_ptr>(&wmemchr) },
+	{ "th_strdup", (uintptr_t)&strdup }, { "th_wcsdup", (uintptr_t)&wcsdup },
 	{ "th_strndup", (uintptr_t)&strndup },
 	{ "th_strdup_size", (uintptr_t)&strdup_size },
 
 	// String functions
-	{ "th_strcmp", (uintptr_t)&strcmp },
-	{ "th_strncmp", (uintptr_t)&strncmp },
-	{ "th_stricmp", (uintptr_t)&stricmp },
-	{ "th_strnicmp", (uintptr_t)&strnicmp },
-	{ "th_strcpy", (uintptr_t)&strcpy },
-	{ "th_strncpy", (uintptr_t)&strncpy },
-	{ "th_strcat", (uintptr_t)&strcat },
-	{ "th_strncat", (uintptr_t)&strncat },
-	{ "th_strlen", (uintptr_t)&strlen },
-	{ "th_strnlen_s", (uintptr_t)&strnlen_s },
-	{ "th_strchr", (uintptr_t)static_cast<strchr_ptr>(&strchr) },
-	{ "th_strrchr", (uintptr_t)static_cast<strchr_ptr>(&strrchr) },
-	{ "th_strstr", (uintptr_t)static_cast<strstr_ptr>(&strstr) },
-	{ "th_strrev", (uintptr_t)&_strrev },
+	{ "th_strcmp", (uintptr_t)&strcmp }, { "th_wcscmp", (uintptr_t)&wcscmp },
+	{ "th_strncmp", (uintptr_t)&strncmp }, { "th_wcsncmp", (uintptr_t)&wcsncmp },
+	{ "th_stricmp", (uintptr_t)&stricmp }, { "th_wcsicmp", (uintptr_t)&wcsicmp },
+	{ "th_strnicmp", (uintptr_t)&strnicmp }, { "th_wcsnicmp", (uintptr_t)&_wcsnicmp },
+	{ "th_strcpy", (uintptr_t)&strcpy }, { "th_wcscpy", (uintptr_t)&wcscpy },
+	{ "th_strncpy", (uintptr_t)&strncpy }, { "th_wcsncpy", (uintptr_t)&wcsncpy },
+	{ "th_strcat", (uintptr_t)&strcat }, { "th_wcscat", (uintptr_t)&wcscat },
+	{ "th_strncat", (uintptr_t)&strncat }, { "th_wcsncat", (uintptr_t)&wcsncat },
+	{ "th_strlen", (uintptr_t)&strlen }, { "th_wcslen", (uintptr_t)&wcslen },
+	{ "th_strnlen_s", (uintptr_t)&strnlen_s }, { "th_wcsnlen_s", (uintptr_t)&wcsnlen_s },
+	{ "th_strchr", (uintptr_t)static_cast<strchr_ptr>(&strchr) }, { "th_wcschr", (uintptr_t)static_cast<wcschr_ptr>(&wcschr) },
+	{ "th_strrchr", (uintptr_t)static_cast<strchr_ptr>(&strrchr) }, { "th_wcsrchr", (uintptr_t)static_cast<wcschr_ptr>(&wcsrchr) },
+	{ "th_strstr", (uintptr_t)static_cast<strstr_ptr>(&strstr) }, { "th_wcsstr", (uintptr_t)static_cast<wcsstr_ptr>(&wcsstr) },
+	{ "th_strspn", (uintptr_t)&strspn }, { "th_wcsspn", (uintptr_t)&wcsspn },
+	{ "th_strcspn", (uintptr_t)&strcspn }, { "th_wcscspn", (uintptr_t)&wcscspn },
+	{ "th_strpbrk", (uintptr_t)static_cast<strpbrk_ptr>(&strpbrk) }, { "th_wcspbrk", (uintptr_t)static_cast<wcspbrk_ptr>(&wcspbrk) },
+	{ "th_strrev", (uintptr_t)&_strrev }, { "th_wcsrev", (uintptr_t)&_wcsrev },
+	{ "th_strtol", (uintptr_t)&strtol }, { "th_wcstol", (uintptr_t)&wcstol },
+	{ "th_strtoul", (uintptr_t)&strtoul }, { "th_wcstoul", (uintptr_t)&wcstoul },
+	{ "th_strtoll", (uintptr_t)&strtoll }, { "th_wcstoll", (uintptr_t)&wcstoll },
+	{ "th_strtoull", (uintptr_t)&strtoull }, { "th_wcstoull", (uintptr_t)&wcstoull },
+	{ "th_strtof", (uintptr_t)&strtof }, { "th_wcstof", (uintptr_t)&wcstof },
+	{ "th_strtod", (uintptr_t)&strtod }, { "th_wcstod", (uintptr_t)&wcstod },
 
 	// Formatting functions
-	{ "th_sprintf", (uintptr_t)&sprintf },
-	{ "th_vsprintf", (uintptr_t)&vsprintf },
-	{ "th_snprintf", (uintptr_t)&snprintf },
-	{ "th_vsnprintf", (uintptr_t)&vsnprintf },
-	{ "th_sscanf", (uintptr_t)&sscanf },
-	{ "th_vsscanf", (uintptr_t)&vsscanf },
+	{ "th_sprintf", (uintptr_t)&sprintf }, //{ "th_swprintf", (uintptr_t)&_swprintf },
+	{ "th_vsprintf", (uintptr_t)&vsprintf }, //{ "th_vswprintf", (uintptr_t)&_vswprintf },
+	{ "th_snprintf", (uintptr_t)&snprintf }, //{ "th_snwprintf", (uintptr_t)static_cast<snwprintf_ptr>(&swprintf) },
+	{ "th_vsnprintf", (uintptr_t)&vsnprintf }, //{ "th_vsnwprintf", (uintptr_t)static_cast<vsnwprintf_ptr>(&vswprintf) },
+	{ "th_sscanf", (uintptr_t)&sscanf }, { "th_swscanf", (uintptr_t)&swscanf },
+	{ "th_vsscanf", (uintptr_t)&vsscanf }, { "th_vswscanf", (uintptr_t)&vswscanf },
 	{ "th_strftime", (uintptr_t)&strftime },
+
+	// Console IO functions
+	{ "th_printf", (uintptr_t)&printf }, { "th_wprintf", (uintptr_t)&wprintf },
+	{ "th_vprintf", (uintptr_t)&vprintf }, { "th_vwprintf", (uintptr_t)&vwprintf },
+	{ "th_puts", (uintptr_t)&puts },
+	{ "th_getchar", (uintptr_t)&getchar }, { "th_getwchar", (uintptr_t)&getwchar },
+	{ "th_putchar", (uintptr_t)&putchar }, { "th_putwchar", (uintptr_t)&putwchar },
 
 	// Math functions
 	{ "th_fabsf", (uintptr_t)&fabsf }, { "th_fabs", (uintptr_t)static_cast<math_1arg_ptr>(&fabs) },
@@ -139,6 +165,7 @@ static std::unordered_map<std::string_view, uintptr_t> funcs = {
 	{ "th_fminf", (uintptr_t)&fminf }, { "th_fmin", (uintptr_t)static_cast<math_2arg_ptr>(&fmin) },
 	{ "th_fdimf", (uintptr_t)&fdimf }, { "th_fdim", (uintptr_t)static_cast<math_2arg_ptr>(&fdim) },
 	{ "th_expf", (uintptr_t)&expf }, { "th_exp", (uintptr_t)static_cast<math_1arg_ptr>(&exp) },
+	{ "th_exp2f", (uintptr_t)&exp2f }, { "th_exp2", (uintptr_t)static_cast<math_1arg_ptr>(&exp2) },
 	{ "th_logf", (uintptr_t)&logf }, { "th_log", (uintptr_t)static_cast<math_1arg_ptr>(&log) },
 	{ "th_log10f", (uintptr_t)&log10f }, { "th_log10", (uintptr_t)static_cast<math_1arg_ptr>(&log10) },
 	{ "th_log2f", (uintptr_t)&log2f }, { "th_log2", (uintptr_t)static_cast<math_1arg_ptr>(&log2) },
@@ -157,6 +184,7 @@ static std::unordered_map<std::string_view, uintptr_t> funcs = {
 	{ "th_truncf", (uintptr_t)&truncf }, { "th_trunc", (uintptr_t)static_cast<math_1arg_ptr>(&trunc) },
 	{ "th_roundf", (uintptr_t)&roundf }, { "th_round", (uintptr_t)static_cast<math_1arg_ptr>(&round) },
 	{ "th_nearbyintf", (uintptr_t)&nearbyintf }, { "th_nearbyint", (uintptr_t)static_cast<math_1arg_ptr>(&nearbyint) },
+	{ "th_ldexpf", (uintptr_t)&ldexpf }, { "th_ldexp", (uintptr_t)static_cast<math_2arg_ptr_alt>(&ldexp) },
 
 #if TH_X86
 	// Various compiler intrinsics
@@ -210,7 +238,7 @@ static mod_funcs_t patch_funcs = {};
 static std::vector<HMODULE> plugins;
 
 TH_EXPORT void TH_CDECL export_jansson_funcs_mod_init(void*) {
-	HMODULE jansson_handle = GetModuleHandleA("jansson" DEBUG_OR_RELEASE ".dll");
+	HMODULE jansson_handle = GetModuleHandleA("jansson" FILE_SUFFIX ".dll");
 	if (exported_func_t* jansson_funcs = GetExportedFunctions(jansson_handle)) {
 		for (size_t i = 0; jansson_funcs[i].func != 0 && jansson_funcs[i].name != nullptr; i++) {
 			funcs[jansson_funcs[i].name] = jansson_funcs[i].func;
@@ -286,46 +314,58 @@ int plugin_init(HMODULE hMod)
 	return 0;
 }
 
-void plugin_load(const char *const fn_abs, const char *fn)
-{
-	const size_t fn_len = strlen(fn);
-	const size_t dbg_len = strlen("_d.dll");
-	const bool is_debug_plugin = fn_len >= dbg_len && strcmp(fn + fn_len - dbg_len, "_d.dll") == 0;
-#ifdef _DEBUG
+void plugin_load(const char *const fn_abs, const char *fn) {
+	std::string_view fn_view = fn;
+	const bool is_debug_plugin = string_view_ends_with(fn_view, "_d.dll");
+#if !NDEBUG
 	if (!is_debug_plugin) {
 		log_printf("[Plugin] %s: release plugin ignored in debug mode (or this dll is not a plugin)\n", fn);
 		return;
 	}
 #else
-	if (is_debug_plugin) {
+	if unexpected(is_debug_plugin) {
 		log_printf("[Plugin] %s: debug plugin ignored in release mode\n", fn);
 		return;
 	}
 #endif
 
-	if (!CheckDLLFunction(fn_abs, "thcrap_plugin_init")) {
-		log_printf("[Plugin] %s: not a plugin\n", fn);
-		return;
-	}
-
-	if (HMODULE plugin = LoadLibraryExU(fn_abs, NULL, LOAD_WITH_ALTERED_SEARCH_PATH)) {
-		switch (FARPROC func = GetProcAddress(plugin, "thcrap_plugin_init");
-				(uintptr_t)func) {
-			default:
-				if (!func()) {
-					log_printf("[Plugin] %s: initialized and active\n", fn);
-					plugin_init(plugin);
-					plugins.push_back(plugin);
-					break;
+	switch (validate_plugin_dll_for_load(fn_abs)) {
+		default:
+			TH_UNREACHABLE;
+		case NOT_A_DLL:
+		case NOT_PLUGIN:
+			log_printf("[Plugin] %s: not a plugin\n", fn);
+			return;
+		case WRONG_ARCH:
+#if TH_X86
+			log_printf("[Plugin] %s: non-32 bit dll ignored in 32 bit mode\n", fn);
+#else
+			log_printf("[Plugin] %s: non-64 bit dll ignored in 64 bit mode\n", fn);
+#endif
+			return;
+		case SHOULD_LOAD:
+			if (HMODULE plugin = LoadLibraryExU(fn_abs, NULL, LOAD_WITH_ALTERED_SEARCH_PATH)) {
+				switch (FARPROC func = GetProcAddress(plugin, "thcrap_plugin_init");
+						(uintptr_t)func) {
+					default:
+						if (!func()) {
+							plugin_init(plugin);
+							plugins.push_back(plugin);
+							log_printf("[Plugin] %s: initialized and active\n", fn);
+							break;
+						}
+						log_printf("[Plugin] %s: not used for this game\n", fn);
+						TH_FALLTHROUGH;
+					case NULL:
+						FreeLibrary(plugin);
 				}
-				log_printf("[Plugin] %s: not used for this game\n", fn);
-				[[fallthrough]];
-			case NULL:
-				FreeLibrary(plugin);
-		}
-	}
-	else {
-		log_printf("[Plugin] Error loading %s: %s\n", fn_abs, lasterror_str());
+			}
+			else {
+				log_printf("[Plugin] Error loading %s: %s\n", fn_abs, lasterror_str());
+			}
+			return;
+		case ALREADY_LOADED:
+			return;
 	}
 }
 
@@ -341,7 +381,7 @@ int plugins_load(const char *dir)
 
 	{
 		WIN32_FIND_DATAA w32fd;
-		HANDLE hFind = FindFirstFile(dll_path, &w32fd);
+		HANDLE hFind = FindFirstFileU(dll_path, &w32fd);
 		if (hFind == INVALID_HANDLE_VALUE) {
 			return 1;
 		}
@@ -350,12 +390,12 @@ int plugins_load(const char *dir)
 			// box if you try to LoadLibrary() a 0-byte file.
 			if (w32fd.nFileSizeLow | w32fd.nFileSizeHigh) {
 				// Yes, "*.dll" means "*.dll*" in FindFirstFile.
-				// https://blogs.msdn.microsoft.com/oldnewthing/20050720-16/?p=34883
+				// https://devblogs.microsoft.com/oldnewthing/20050720-16/?p=34883
 				if (!stricmp(PathFindExtensionA(w32fd.cFileName), ".dll")) {
 					dlls.push_back(strdup(w32fd.cFileName));
 				}
 			}
-		} while (FindNextFile(hFind, &w32fd));
+		} while (FindNextFileU(hFind, &w32fd));
 		FindClose(hFind);
 	}
 	

@@ -13,19 +13,34 @@
 
 struct patchhook_t
 {
-	const char *wildcard;
+	const wchar_t *wildcard;
 	func_patch_t patch_func;
 	func_patch_size_t patch_size_func;
+
+	constexpr patchhook_t(const wchar_t* wildcard, func_patch_t patch_func, func_patch_size_t patch_size_func)
+		: wildcard(wildcard),
+		patch_func(patch_func),
+		patch_size_func(patch_size_func) {}
 };
 
 std::vector<patchhook_t> patchhooks;
 
 HANDLE file_stream(const char *fn)
 {
-	return CreateFile(
+	return CreateFileU(
 		fn, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
 		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL
 	);
+}
+
+size_t file_stream_size(HANDLE stream) {
+#ifndef TH_X64
+	return GetFileSize(stream, NULL);
+#else
+	DWORD ret_high;
+	size_t ret = GetFileSize(stream, &ret_high);
+	return ret | (size_t)ret_high << 32;
+#endif
 }
 
 void* file_stream_read(HANDLE stream, size_t *file_size_out)
@@ -57,7 +72,7 @@ void* file_stream_read(HANDLE stream, size_t *file_size_out)
 				ReadFile(stream, ret_writer, UINT32_MAX, (LPDWORD)file_size_ptr, NULL);
 				ret_writer += UINT32_MAX;
 			}
-			ReadFile(stream, ret_writer, file_size, (LPDWORD)file_size_ptr, NULL);
+			ReadFile(stream, ret_writer, (DWORD)file_size, (LPDWORD)file_size_ptr, NULL);
 		}
 		CloseHandle(stream);
 	}
@@ -65,9 +80,9 @@ void* file_stream_read(HANDLE stream, size_t *file_size_out)
 #endif
 }
 
-void* file_read(const char *fn, size_t *file_size)
+void* (file_read)(const char *fn, size_t *file_size)
 {
-	return file_stream_read(file_stream(fn), file_size);
+	return file_read_inline(fn, file_size);
 }
 
 int file_write(const char *fn, const void *file_buffer, size_t file_size)
@@ -78,7 +93,7 @@ int file_write(const char *fn, const void *file_buffer, size_t file_size)
 
 	dir_create_for_fn(fn);
 
-	HANDLE handle = CreateFile(
+	HANDLE handle = CreateFileU(
 		fn, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
 		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL
 	);
@@ -97,7 +112,7 @@ int file_write(const char *fn, const void *file_buffer, size_t file_size)
 		}
 		file_buffer_reader += UINT32_MAX;
 	}
-	if (WriteFile(handle, file_buffer_reader, file_size, &idgaf, NULL)) {
+	if (WriteFile(handle, file_buffer_reader, (DWORD)file_size, &idgaf, NULL)) {
 		ret = 0;
 	}
 	else {
@@ -160,7 +175,7 @@ int dir_create_for_fn(const char *fn)
 	if (fn) {
 		if (size_t path_length = PtrDiffStrlen(PathFindFileNameU(fn), fn)) {
 			char* fn_dir = strdup_size(fn, path_length);
-			ret = CreateDirectory(fn_dir, NULL);
+			ret = CreateDirectoryU(fn_dir, NULL);
 			free(fn_dir);
 		}
 		else {
@@ -193,7 +208,7 @@ int patch_file_exists(const patch_t *patch_info, const char *fn)
 	}
 	BOOL ret = FALSE;
 	if (char *patch_fn = fn_for_patch(patch_info, fn)) {
-		ret = PathFileExists(patch_fn);
+		ret = PathFileExistsU(patch_fn);
 		free(patch_fn);
 	}
 	return ret;
@@ -203,7 +218,7 @@ int patch_file_blacklisted(const patch_t *patch_info, const char *fn)
 {
 	if unexpected(patch_info->ignore) {
 		for (size_t i = 0; patch_info->ignore[i]; i++) {
-			if (PathMatchSpec(fn, patch_info->ignore[i])) {
+			if (PathMatchSpecExU(fn, patch_info->ignore[i], PMSF_NORMAL) == S_OK) {
 				return 1;
 			}
 		}
@@ -245,39 +260,30 @@ int patch_file_store(const patch_t *patch_info, const char *fn, const void *file
 
 json_t* patch_json_load(const patch_t *patch_info, const char *fn, size_t *file_size)
 {
-	if unexpected(patch_file_blacklisted(patch_info, fn)) {
-		if (file_size) {
-			*file_size = 0;
+	if (!patch_file_blacklisted(patch_info, fn)) {
+		if (char *_fn = fn_for_patch(patch_info, fn)) {
+			json_t* file_json = json_load_file_report_size(_fn, file_size);
+			free(_fn);
+			return file_json;
 		}
-		return NULL;
 	}
-	json_t *file_json = NULL;
-	if (char *_fn = fn_for_patch(patch_info, fn)) {
-		file_json = json_load_file_report(_fn);
-		if (file_size) {
-			HANDLE fn_stream = file_stream(_fn);
-			if (fn_stream != INVALID_HANDLE_VALUE) {
-				*file_size = GetFileSize(fn_stream, NULL);
-				CloseHandle(fn_stream);
-			}
-			else {
-				*file_size = 0;
-			}
-		}
-		free(_fn);
+	if (file_size) {
+		*file_size = 0;
 	}
-	return file_json;
+	return NULL;
 }
 
 size_t patch_json_merge(json_t **json_inout, const patch_t *patch_info, const char *fn)
 {
 	size_t file_size = 0;
-	if(fn && json_inout) {
+	if (fn && json_inout) {
 		json_t *json_new = patch_json_load(patch_info, fn, &file_size);
-		if(json_new) {
+		if (json_new) {
 			patch_print_fn(patch_info, fn);
 			if (!json_object_update_recursive(*json_inout, json_new)) {
-				json_decref(json_new);
+				// This is safe to call because there can
+				// only be a single reference to json_new
+				json_delete(json_new);
 			}
 			else {
 				*json_inout = json_new;
@@ -304,7 +310,7 @@ int patch_file_delete(const patch_t *patch_info, const char *fn)
 {
 	int ret = 1;
 	if (char *patch_fn = fn_for_patch(patch_info, fn)) {
-		ret = W32_ERR_WRAP(DeleteFile(patch_fn));
+		ret = W32_ERR_WRAP(DeleteFileU(patch_fn));
 		free(patch_fn);
 	}
 	return ret;
@@ -331,7 +337,7 @@ patch_t patch_build(const patch_desc_t *desc)
 {
 	std::string_view repo_id = desc->repo_id;
 	std::string_view patch_id = desc->patch_id;
-	static constexpr std::string_view repos = "repos/";
+	static constexpr std::string_view repos = "repos/"sv;
 	char* archive = (char*)malloc(repos.length() + repo_id.length() + 1 + patch_id.length() + 2);
 	char* archive_write = archive;
 	archive_write += repos.copy(archive_write, repos.length());
@@ -376,9 +382,9 @@ patch_t patch_init(const char *patch_path, const json_t *patch_info, size_t leve
 	if (PathIsRelativeU(patch_path)) {
 		// Add the current directory to the patch archive field
 		const size_t patch_len = strlen(patch_path) + 1; // Includes + 1 for path separator
-		const size_t dir_len = GetCurrentDirectory(0, NULL); // Includes null terminator
+		const size_t dir_len = GetCurrentDirectoryU(0, NULL); // Includes null terminator
 		char *full_patch_path = patch.archive = (char *)malloc(patch_len + dir_len);
-		GetCurrentDirectory(dir_len, full_patch_path);
+		GetCurrentDirectoryU(dir_len, full_patch_path);
 		full_patch_path += dir_len;
 		full_patch_path[-1] = '/';
 		memcpy(full_patch_path, patch_path, patch_len);
@@ -453,7 +459,7 @@ patch_t patch_init(const char *patch_path, const json_t *patch_info, size_t leve
 	json_t *dependencies = json_object_get(patch_js, "dependencies");
 	if (json_is_array(dependencies)) {
 		const size_t array_size = json_array_size(dependencies);
-		patch.dependencies = new patch_desc_t[array_size + 1];
+		patch.dependencies = (patch_desc_t*)malloc(sizeof(patch_desc_t) * (array_size + 1));
 		patch.dependencies[array_size].patch_id = NULL;
 		json_t *val;
 		json_array_foreach_scoped(size_t, i, dependencies, val) {
@@ -464,7 +470,7 @@ patch_t patch_init(const char *patch_path, const json_t *patch_info, size_t leve
 	json_t *fonts = json_object_get(patch_js, "fonts");
 	if (json_is_object(fonts)) {
 		const size_t array_size = json_object_size(fonts);
-		patch.fonts = new char*[array_size + 1];
+		patch.fonts = (char**)malloc(sizeof(char*) * (array_size + 1));
 		patch.fonts[array_size] = NULL;
 		const char* font_fn;
 		size_t i = 0;
@@ -508,14 +514,14 @@ void patch_free(patch_t *patch)
 			for (size_t i = 0; patch->fonts[i]; i++) {
 				free(patch->fonts[i]);
 			}
-			delete[] patch->fonts;
+			free(patch->fonts);
 		}
 		if (patch->dependencies) {
 			for (size_t i = 0; patch->dependencies[i].patch_id; i++) {
 				free(patch->dependencies[i].patch_id);
 				free(patch->dependencies[i].repo_id);
 			}
-			delete[] patch->dependencies;
+			free(patch->dependencies);
 		}
 	}
 }
@@ -530,7 +536,7 @@ int patch_rel_to_abs(patch_t *patch_info, const char *base_path)
 	// relative path (most importantly paths that start with a backslash
 	// and are thus relative to the drive root).
 	// However, it also considers file names as one implied directory level
-	// and is path of... that other half of shlwapi functions that don't work
+	// and is part of... that other half of shlwapi functions that don't work
 	// with forward slashes. Since this behavior goes all the way down to
 	// PathCanonicalize(), a "proper" reimplementation is not exactly trivial.
 	// So we play along for now.
@@ -545,16 +551,16 @@ int patch_rel_to_abs(patch_t *patch_info, const char *base_path)
 			abs_archive = strdup_size(base_path, abs_archive_len);
 		}
 		else {
-			size_t base_path_len = GetCurrentDirectory(0, NULL) + strlen(base_path) + 1;
+			size_t base_path_len = GetCurrentDirectoryU(0, NULL) + strlen(base_path) + 1;
 			size_t abs_archive_len = base_path_len + archive_len;
 			abs_archive = (char*)malloc(abs_archive_len);
-			GetCurrentDirectory(abs_archive_len, abs_archive);
+			GetCurrentDirectoryU(abs_archive_len, abs_archive);
 			PathAppendA(abs_archive, base_path);
 		}
 		str_slash_normalize_win(abs_archive);
 
 		if (!PathIsDirectoryA(base_path)) {
-			PathRemoveFileSpec(abs_archive);
+			PathRemoveFileSpecU(abs_archive);
 		}
 
 		VLA(char, archive_win, archive_len);
@@ -574,31 +580,32 @@ int patch_rel_to_abs(patch_t *patch_info, const char *base_path)
 
 void patchhook_register(const char *wildcard, func_patch_t patch_func, func_patch_size_t patch_size_func)
 {
-	char *wildcard_normalized = strdup(wildcard);
-	str_slash_normalize(wildcard_normalized);
+	wchar_t* wildcard_w = (wchar_t*)utf8_to_utf16(wildcard);
+	wstr_slash_normalize(wildcard_w);
+
 
 	// No checks whether [patch_func] or [patch_size_func] are null
 	// pointers here! Some game support code might only want to hook
 	// [patch_size_func] to e.g. conveniently run some generic, non-
 	// file-related code as early as possible.
-	patchhooks.emplace_back(patchhook_t{ wildcard_normalized, patch_func, patch_size_func });
+	patchhooks.emplace_back(wildcard_w, patch_func, patch_size_func);
 }
 
 patchhook_t *patchhooks_build(const char *fn)
 {
-	if(!fn) {
+	if unexpected(!fn) {
 		return NULL;
 	}
-	VLA(char, fn_normalized, strlen(fn) + 1);
-	strcpy(fn_normalized, fn);
-	str_slash_normalize(fn_normalized);
+	WCHAR_T_DEC(fn);
+	WCHAR_T_CONV(fn);
+	wstr_slash_normalize(fn_w);
 
 	patchhook_t *hooks = (patchhook_t *)malloc((patchhooks.size() + 1) * sizeof(patchhook_t));
-	patchhook_t *last = std::copy_if(patchhooks.begin(), patchhooks.end(), hooks, [fn_normalized](const patchhook_t& hook) {
-		return PathMatchSpec(fn_normalized, hook.wildcard);
+	patchhook_t *last = std::copy_if(patchhooks.begin(), patchhooks.end(), hooks, [fn_w](const patchhook_t& hook) {
+		return PathMatchSpecExW(fn_w, hook.wildcard, PMSF_NORMAL) == S_OK;
 	});
+	WCHAR_T_FREE(fn);
 	last->wildcard = nullptr;
-	VLA_FREE(fn_normalized);
 
 	if (hooks[0].wildcard == nullptr) {
 		free(hooks);
@@ -612,18 +619,17 @@ json_t *patchhooks_load_diff(const patchhook_t *hook_array, const char *fn, size
 	if (!hook_array || !fn) {
 		return nullptr;
 	}
-	json_t *patch;
 
+	BUILD_VLA_STR(char, diff_fn, fn, ".jdiff");
 	size_t diff_size = 0;
-	char* diff_fn = strdup_cat(fn, ".jdiff");
-	patch = stack_game_json_resolve(diff_fn, &diff_size);
-	free(diff_fn);
+	json_t* patch = stack_game_json_resolve(diff_fn, &diff_size);
+	VLA_FREE(diff_fn);
 
 	if (size) {
 		*size = 0;
 		for (size_t i = 0; hook_array[i].wildcard; i++) {
-			if (hook_array[i].patch_size_func) {
-				*size += hook_array[i].patch_size_func(fn, patch, diff_size);
+			if (auto func = hook_array[i].patch_size_func) {
+				*size += func(fn, patch, diff_size);
 			}
 			else {
 				*size += diff_size;
@@ -636,23 +642,23 @@ json_t *patchhooks_load_diff(const patchhook_t *hook_array, const char *fn, size
 
 int patchhooks_run(const patchhook_t *hook_array, void *file_inout, size_t size_out, size_t size_in, const char *fn, json_t *patch)
 {
-	int ret;
-
 	// We don't check [patch] here - hooks should be run even if there is no
 	// dedicated patch file.
-	if(!file_inout) {
+	if unexpected(!file_inout) {
 		return -1;
 	}
-	ret = 0;
-	for (size_t i = 0; hook_array && hook_array[i].wildcard; i++) {
-		func_patch_t func = hook_array[i].patch_func;
-		if(func) {
-			if (func(file_inout, size_out, size_in, fn, patch) > 0) {
-				const char *patched_files_dump = runconfig_patched_files_dump_get();
-				if (patched_files_dump) {
-					DumpDatFile(patched_files_dump, fn, file_inout, size_out);
+	int ret = 0;
+	if (hook_array) {
+		for (size_t i = 0; hook_array[i].wildcard; i++) {
+			func_patch_t func = hook_array[i].patch_func;
+			if (func) {
+				if (func(file_inout, size_out, size_in, fn, patch) > 0) {
+					const char *patched_files_dump = runconfig_patched_files_dump_get();
+					if unexpected(patched_files_dump) {
+						DumpDatFile(patched_files_dump, fn, file_inout, size_out);
+					}
+					ret = 1;
 				}
-				ret = 1;
 			}
 		}
 	}
@@ -914,7 +920,7 @@ void patch_opts_from_json(json_t *opts) {
 				continue;
 			case PVT_SBYTE: case PVT_SWORD: case PVT_SDWORD: case PVT_SQWORD:
 			case PVT_BYTE: case PVT_WORD: case PVT_DWORD: case PVT_QWORD:
-				json_int_t value;
+				jeval64_t value;
 				(void)json_eval_int64(j_val_val, &value, JEVAL_DEFAULT);
 				switch (entry.type) {
 					case PVT_SBYTE:

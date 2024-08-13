@@ -42,8 +42,6 @@ int BP_mission(x86_reg_t *regs, json_t *bp_info)
 	size_t scene = *(size_t*)(regs->esp + 4 + json_object_get_hex(bp_info, "scene"));
 	size_t chara_offset = json_object_get_hex(bp_info, "chara");
 	size_t chara = chara_offset ? *(size_t*)(regs->esp + 4 + chara_offset) : 0;
-
-	size_t ret_fixup = json_object_get_hex(bp_info, "ret_fixup");
 	// ----------
 
 	if (line < 3) {
@@ -57,10 +55,9 @@ int BP_mission(x86_reg_t *regs, json_t *bp_info)
 	}
 
 	json_t *missions = jsondata_game_get("missions.js");
-	VLA(char, mission_key_str, 16*3 + 2 + 1);
+	char mission_key_str[16*3 + 2 + 1];
 	sprintf(mission_key_str, "%u_%u_%u", chara, stage, scene);
 	json_t *mission = json_object_get(missions, mission_key_str);
-	VLA_FREE(mission_key_str);
 
 	if (!mission) {
 		return 1;
@@ -77,7 +74,6 @@ int BP_mission(x86_reg_t *regs, json_t *bp_info)
 
 	// return one function higher
 	regs->retaddr = ((size_t*)regs->esp)[1];
-	regs->esp += 4 + ret_fixup; // ret_fixup is needed because stdcall
 	return 0;
 }
 
@@ -95,10 +91,9 @@ int BP_mission_check_furi_a(x86_reg_t *regs, json_t *bp_info)
 
 	// prepare furi_a
 	json_t *missions = jsondata_game_get("missions.js");
-	VLA(char, mission_key_str, 16 * 3 + 2 + 1);
+	char mission_key_str[16 * 3 + 2 + 1];
 	sprintf(mission_key_str, "%u_%u_%u", lastchara, laststage, lastscene);
 	json_t *mission = json_object_get(missions, mission_key_str);
-	VLA_FREE(mission_key_str);
 	if (!mission) {
 		mission_furi_a = -2;
 		return 1; // original string

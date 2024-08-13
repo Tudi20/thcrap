@@ -9,6 +9,14 @@
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{7833FCCF-C3EA-46ED-8D38-5CAB478AB041}</ProjectGuid>
@@ -24,21 +32,25 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
   </PropertyGroup>
   <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>thcrap_tasofro.def</ModuleDefinitionFile>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalDependencies Condition="$(UseDebugLibraries)==true">shlwapi.lib;gdiplus.lib;thcrap_d.lib;libpng16_d.lib;act_nut_lib_d.lib;bmpfont_create_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalDependencies Condition="$(UseDebugLibraries)!=true">shlwapi.lib;gdiplus.lib;thcrap.lib;libpng16.lib;act_nut_lib.lib;bmpfont_create.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;gdiplus.lib;thcrap$(Suffix).lib;libpng16$(Suffix).lib;act_nut_lib$(Suffix).lib;bmpfont_create$(Suffix).lib;fribidi$(Suffix).lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\act-nut.cpp" />
+    <ClCompile Include="src\arabic_bidi.cpp" />
     <ClCompile Include="src\bgm.cpp" />
     <ClCompile Include="src\crypt.cpp" />
     <ClCompile Include="src\csv.cpp" />
     <ClCompile Include="src\cv0.cpp" />
     <ClCompile Include="src\files_list.cpp" />
+    <ClCompile Include="src\mediawiki.cpp" />
     <ClCompile Include="src\nhtex.cpp" />
     <ClCompile Include="src\nsml.cpp" />
     <ClCompile Include="src\nsml_images.cpp" />
@@ -46,7 +58,6 @@
     <ClCompile Include="src\plaintext.cpp" />
     <ClCompile Include="src\plugin.cpp" />
     <ClCompile Include="src\png.cpp" />
-    <ClCompile Include="src\ruby.cpp" />
     <ClCompile Include="src\spellcards_generator.cpp" />
     <ClCompile Include="src\tasofro_file.cpp" />
     <ClCompile Include="src\tfcs.cpp" />
@@ -74,7 +85,6 @@
     <ClInclude Include="src\tfcs.h" />
     <ClInclude Include="src\th155_bmp_font.h" />
     <ClInclude Include="src\thcrap_tasofro.h" />
-    <GAS Include="src\bp_bmpfont.asm" />
     <None Include="thcrap_tasofro.def" />
   </ItemGroup>
 </Project>

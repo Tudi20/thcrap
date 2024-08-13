@@ -472,9 +472,9 @@ DLGTEMPLATE* dialog_translate(HINSTANCE hInstance, LPCSTR lpTemplateName)
 		dlg_format = "%s%u%s";
 	}
 	{
-		const char *dlg_prefix = "dialog_";
-		const char *dlg_suffix_bin = ".bin";
-		const char *dlg_suffix_js = ".js";
+		static constexpr char dlg_prefix[] = "dialog_";
+		static constexpr char dlg_suffix_bin[] = ".bin";
+		static constexpr char dlg_suffix_js[] = ".js";
 		size_t fn_len = strlen(dlg_prefix) + dlg_name_len + strlen(dlg_suffix_bin) + 1;
 		VLA(char, fn, fn_len);
 		size_t hDlg_rep_len;
@@ -574,11 +574,15 @@ INT_PTR WINAPI dialog_DialogBoxParamA(
 	return ret;
 }
 
-void dialog_mod_detour(void)
+extern "C" {
+
+TH_EXPORT void dialog_mod_detour(void)
 {
 	detour_chain("user32.dll", 1,
 		"CreateDialogParamA", dialog_CreateDialogParamA, &chain_CreateDialogParamU,
 		"DialogBoxParamA", dialog_DialogBoxParamA, &chain_DialogBoxParamU,
 		NULL
 	);
+}
+
 }

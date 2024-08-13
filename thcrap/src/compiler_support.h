@@ -46,6 +46,12 @@
 #define ICC_COMPAT 1
 #endif
 
+#if MSVC_COMPAT && !GCC_COMPAT && !CLANG_COMPAT && !MINGW_COMPAT && !ICC_COMPAT
+#define COMPILER_IS_REAL_MSVC 1
+#else
+#define COMPILER_IS_REAL_MSVC 0
+#endif
+
 // Apparently __has_include is part of the C++17 standard
 // despite using the double underscore naming usually reserved
 // for compiler internal use. Weird.
@@ -81,7 +87,7 @@
 // - C++ Version Detection
 #ifdef __cplusplus
 #if __cplusplus >= 199711L
-#define CPP98
+#define CPP98 1
 #endif
 #if __cplusplus >= 201103L
 #define CPP11 1
@@ -97,6 +103,15 @@
 #endif
 #if __cplusplus >= 202002L
 #define CPP20 1
+#endif
+#if __cplusplus > 202002L && defined(_MSC_VER)
+#define CPP20LATEST 1
+#endif
+#if __cplusplus >= 202302L
+#define CPP23 1
+#endif
+#if __cplusplus > 202302L && defined(_MSC_VER)
+#define CPP23LATEST 1
 #endif
 #endif
 
@@ -134,6 +149,15 @@
 // involved with __has_cpp_attribute.
 #ifndef __has_c_attribute
 #define __has_c_attribute(attr) 0
+#endif
+
+// C attributes support namespaces according to the C2X
+// standard, but MSVC toolsets fail to parse namespaces
+// in that location anyway when not parsing as C++.
+#if !defined(__cplusplus) && COMPILER_IS_REAL_MSVC
+#define __has_c_attribute_with_namespace(attr) 0
+#else
+#define __has_c_attribute_with_namespace(attr) __has_c_attribute(attr)
 #endif
 
 // - GNU Attributes
@@ -222,13 +246,13 @@
 
 // - [[nodiscard]] Equivalent Attributes
 #if CPP20 || __has_cpp_attribute(nodiscard) >= 201907L
-#define TH_NODISCARD [[nodicard]]
+#define TH_NODISCARD [[nodiscard]]
 #define TH_NODISCARD_REASON(reason) [[nodiscard(reason)]]
 #elif CPP17 || __has_cpp_attribute(nodiscard) >= 201603L
-#define TH_NODISCARD [[nodicard]]
+#define TH_NODISCARD [[nodiscard]]
 #define TH_NODISCARD_REASON(reason) [[nodiscard]]
 #elif __has_c_attribute(nodiscard) >= 202003L
-#define TH_NODISCARD [[nodicard]]
+#define TH_NODISCARD [[nodiscard]]
 #define TH_NODISCARD_REASON(reason) [[nodiscard(reason)]]
 #elif __has_attribute(warn_unused_result)
 #define TH_NODISCARD __attribute__((warn_unused_result))
@@ -283,7 +307,7 @@
 // - [[likely]] Equivalent Attributes
 #if __has_cpp_attribute(likely) >= 201803L
 #define TH_LIKELY [[likely]]
-#elif __has_c_attribute(clang::likely)
+#elif __has_c_attribute_with_namespace(clang::likely)
 #define TH_LIKELY [[clang::likely]]
 #else
 #define TH_LIKELY
@@ -292,7 +316,7 @@
 // - [[unlikely]] Equivalent Attributes
 #if __has_cpp_attribute(unlikely) >= 201803L
 #define TH_UNLIKELY [[unlikely]]
-#elif __has_c_attribute(clang::unlikely)
+#elif __has_c_attribute_with_namespace(clang::unlikely)
 #define TH_UNLIKELY [[clang::unlikely]]
 #else
 #define TH_UNLIKELY
@@ -394,7 +418,7 @@ extern "C++" {
 #endif
 
 // - GCC-specific MSVC-Compatibility Attribute
-#if __has_attribute(ms_abi)
+#if TH_X64 && __has_attribute(ms_abi)
 #define TH_MS_ABI __attribute__((ms_abi))
 #else
 #define TH_MS_ABI
@@ -539,83 +563,84 @@ extern "C++" {
 
 // - Segmented Addressing
 #if __has_attribute(address_space)
-#define read_fs_byte(offset) (*(uint8_t __attribute__((address_space(257)))*)((uintptr_t)offset))
-#define read_fs_word(offset) (*(uint16_t __attribute__((address_space(257)))*)((uintptr_t)offset))
-#define read_fs_dword(offset) (*(uint32_t __attribute__((address_space(257)))*)((uintptr_t)offset))
-#define write_fs_byte(offset, data) ((void)(*(uint8_t __attribute__((address_space(257)))*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_fs_word(offset, data) ((void)(*(uint16_t __attribute__((address_space(257)))*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_fs_dword(offset, data) ((void)(*(uint32_t __attribute__((address_space(257)))*)((uintptr_t)offset) = (uint32_t)(data)))
-#elif defined(__SEG_FS) && (CLANG_COMPAT || !defined(__cplusplus)) // __seg_fs isn't recognized by GCC when compiling C++
-#define read_fs_byte(offset) (*(__seg_fs uint8_t*)((uintptr_t)offset))
-#define read_fs_word(offset) (*(__seg_fs uint16_t*)((uintptr_t)offset))
-#define read_fs_dword(offset) (*(__seg_fs uint32_t*)((uintptr_t)offset))
-#define write_fs_byte(offset, data) ((void)(*(__seg_fs uint8_t*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_fs_word(offset, data) ((void)(*(__seg_fs uint16_t*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_fs_dword(offset, data) ((void)(*(__seg_fs uint32_t*)((uintptr_t)offset) = (uint32_t)(data)))
-#elif GCC_COMPAT
-#ifdef __cplusplus
+#define read_fs_byte(offset) (*(uint8_t __attribute__((address_space(257)))*)((uintptr_t)(offset)))
+#define read_fs_word(offset) (*(uint16_t __attribute__((address_space(257)))*)((uintptr_t)(offset)))
+#define read_fs_dword(offset) (*(uint32_t __attribute__((address_space(257)))*)((uintptr_t)(offset)))
+#define read_fs_qword(offset) (*(uint64_t __attribute__((address_space(257)))*)((uintptr_t)(offset)))
+#define write_fs_byte(offset, data) ((void)(*(uint8_t __attribute__((address_space(257)))*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_fs_word(offset, data) ((void)(*(uint16_t __attribute__((address_space(257)))*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_fs_dword(offset, data) ((void)(*(uint32_t __attribute__((address_space(257)))*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_fs_qword(offset, data) ((void)(*(uint64_t __attribute__((address_space(257)))*)((uintptr_t)(offset)) = (uint64_t)(data)))
+#elif defined(__SEG_FS)
+#if CLANG_COMPAT || !defined(__cplusplus) // __seg_fs isn't recognized by GCC when compiling C++
+#define read_fs_byte(offset) (*(__seg_fs uint8_t*)((uintptr_t)(offset)))
+#define read_fs_word(offset) (*(__seg_fs uint16_t*)((uintptr_t)(offset)))
+#define read_fs_dword(offset) (*(__seg_fs uint32_t*)((uintptr_t)(offset)))
+#define read_fs_qword(offset) (*(__seg_fs uint64_t*)((uintptr_t)(offset)))
+#define write_fs_byte(offset, data) ((void)(*(__seg_fs uint8_t*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_fs_word(offset, data) ((void)(*(__seg_fs uint16_t*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_fs_dword(offset, data) ((void)(*(__seg_fs uint32_t*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_fs_qword(offset, data) ((void)(*(__seg_fs uint64_t*)((uintptr_t)(offset)) = (uint64_t)(data)))
+#else
 extern "C" {
-#endif
-#define read_fs_byte(offset) read_fs_byte_gcc(offset)
-#define read_fs_word(offset) read_fs_word_gcc(offset)
-#define read_fs_dword(offset) read_fs_dword_gcc(offset)
-#define write_fs_byte(offset, data) write_fs_byte_gcc(offset, data)
-#define write_fs_word(offset, data) write_fs_word_gcc(offset, data)
-#define write_fs_dword(offset, data) write_fs_dword_gcc(offset, data)
 uint8_t read_fs_byte_gcc(size_t offset);
 uint16_t read_fs_word_gcc(size_t offset);
 uint32_t read_fs_dword_gcc(size_t offset);
+uint32_t read_fs_qword_gcc(size_t offset);
 void write_fs_byte_gcc(size_t offset, uint8_t data);
 void write_fs_word_gcc(size_t offset, uint16_t data);
 void write_fs_dword_gcc(size_t offset, uint32_t data);
-#ifdef __cplusplus
+void write_fs_qword_gcc(size_t offset, uint32_t data);
 };
+#define read_fs_byte(offset) read_fs_byte_gcc(offset)
+#define read_fs_word(offset) read_fs_word_gcc(offset)
+#define read_fs_dword(offset) read_fs_dword_gcc(offset)
+#define read_fs_qword(offset) read_fs_qword_gcc(offset)
+#define write_fs_byte(offset, data) write_fs_byte_gcc((offset), (data))
+#define write_fs_word(offset, data) write_fs_word_gcc((offset), (data))
+#define write_fs_dword(offset, data) write_fs_dword_gcc((offset), (data))
+#define write_fs_qword(offset, data) write_fs_qword_gcc((offset), (data))
 #endif
 #elif MSVC_COMPAT
 #define read_fs_byte(offset) __readfsbyte(offset)
 #define read_fs_word(offset) __readfsword(offset)
 #define read_fs_dword(offset) __readfsdword(offset)
-#define write_fs_byte(offset, data) __writefsbyte(offset, data)
-#define write_fs_word(offset, data) __writefsword(offset, data)
-#define write_fs_dword(offset, data) __writefsdword(offset, data)
+#define read_fs_qword(offset) __readfsqword(offset)
+#define write_fs_byte(offset, data) __writefsbyte((offset), (data))
+#define write_fs_word(offset, data) __writefsword((offset), (data))
+#define write_fs_dword(offset, data) __writefsdword((offset), (data))
+#define write_fs_qword(offset, data) __writefsqword((offset), (data))
 #else
-#define read_fs_byte(offset) (*(uint8_t*)((uintptr_t)offset))
-#define read_fs_word(offset) (*(uint16_t*)((uintptr_t)offset))
-#define read_fs_dword(offset) (*(uint32_t*)((uintptr_t)offset))
-#define write_fs_byte(offset, data) ((void)(*(uint8_t*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_fs_word(offset, data) ((void)(*(uint16_t*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_fs_dword(offset, data) ((void)(*(uint32_t*)((uintptr_t)offset) = (uint32_t)(data)))
+#define read_fs_byte(offset) (*(uint8_t*)((uintptr_t)(offset)))
+#define read_fs_word(offset) (*(uint16_t*)((uintptr_t)(offset)))
+#define read_fs_dword(offset) (*(uint32_t*)((uintptr_t)(offset)))
+#define read_fs_qword(offset) (*(uint64_t*)((uintptr_t)(offset)))
+#define write_fs_byte(offset, data) ((void)(*(uint8_t*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_fs_word(offset, data) ((void)(*(uint16_t*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_fs_dword(offset, data) ((void)(*(uint32_t*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_fs_qword(offset, data) ((void)(*(uint64_t*)((uintptr_t)(offset)) = (uint64_t)(data)))
 #endif
 #if __has_attribute(address_space)
-#define read_gs_byte(offset) (*(uint8_t __attribute__((address_space(256)))*)((uintptr_t)offset))
-#define read_gs_word(offset) (*(uint16_t __attribute__((address_space(256)))*)((uintptr_t)offset))
-#define read_gs_dword(offset) (*(uint32_t __attribute__((address_space(256)))*)((uintptr_t)offset))
-#define read_gs_qword(offset) (*(uint64_t __attribute__((address_space(256)))*)((uintptr_t)offset))
-#define write_gs_byte(offset, data) ((void)(*(uint8_t __attribute__((address_space(256)))*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_gs_word(offset, data) ((void)(*(uint16_t __attribute__((address_space(256)))*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_gs_dword(offset, data) ((void)(*(uint32_t __attribute__((address_space(256)))*)((uintptr_t)offset) = (uint32_t)(data)))
-#define write_gs_qword(offset, data) ((void)(*(uint64_t __attribute__((address_space(256)))*)((uintptr_t)offset) = (uint64_t)(data)))
-#elif defined(__SEG_GS) && (CLANG_COMPAT || !defined(__cplusplus)) // __seg_gs isn't recognized by GCC when compiling C++
-#define read_gs_byte(offset) (*(__seg_gs uint8_t*)((uintptr_t)offset))
-#define read_gs_word(offset) (*(__seg_gs uint16_t*)((uintptr_t)offset))
-#define read_gs_dword(offset) (*(__seg_gs uint32_t*)((uintptr_t)offset))
-#define read_gs_qword(offset) (*(__seg_gs uint64_t*)((uintptr_t)offset))
-#define write_gs_byte(offset, data) ((void)(*(__seg_gs uint8_t*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_gs_word(offset, data) ((void)(*(__seg_gs uint16_t*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_gs_dword(offset, data) ((void)(*(__seg_gs uint32_t*)((uintptr_t)offset) = (uint32_t)(data)))
-#define write_gs_qword(offset, data) ((void)(*(__seg_gs uint64_t*)((uintptr_t)offset) = (uint64_t)(data)))
-#elif GCC_COMPAT
-#ifdef __cplusplus
+#define read_gs_byte(offset) (*(uint8_t __attribute__((address_space(256)))*)((uintptr_t)(offset)))
+#define read_gs_word(offset) (*(uint16_t __attribute__((address_space(256)))*)((uintptr_t)(offset)))
+#define read_gs_dword(offset) (*(uint32_t __attribute__((address_space(256)))*)((uintptr_t)(offset)))
+#define read_gs_qword(offset) (*(uint64_t __attribute__((address_space(256)))*)((uintptr_t)(offset)))
+#define write_gs_byte(offset, data) ((void)(*(uint8_t __attribute__((address_space(256)))*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_gs_word(offset, data) ((void)(*(uint16_t __attribute__((address_space(256)))*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_gs_dword(offset, data) ((void)(*(uint32_t __attribute__((address_space(256)))*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_gs_qword(offset, data) ((void)(*(uint64_t __attribute__((address_space(256)))*)((uintptr_t)(offset)) = (uint64_t)(data)))
+#elif defined(__SEG_GS)
+#if CLANG_COMPAT || !defined(__cplusplus) // __seg_gs isn't recognized by GCC when compiling C++
+#define read_gs_byte(offset) (*(__seg_gs uint8_t*)((uintptr_t)(offset)))
+#define read_gs_word(offset) (*(__seg_gs uint16_t*)((uintptr_t)(offset)))
+#define read_gs_dword(offset) (*(__seg_gs uint32_t*)((uintptr_t)(offset)))
+#define read_gs_qword(offset) (*(__seg_gs uint64_t*)((uintptr_t)(offset)))
+#define write_gs_byte(offset, data) ((void)(*(__seg_gs uint8_t*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_gs_word(offset, data) ((void)(*(__seg_gs uint16_t*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_gs_dword(offset, data) ((void)(*(__seg_gs uint32_t*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_gs_qword(offset, data) ((void)(*(__seg_gs uint64_t*)((uintptr_t)(offset)) = (uint64_t)(data)))
+#else
 extern "C" {
-#endif
-#define read_gs_byte(offset) read_gs_byte_gcc(offset)
-#define read_gs_word(offset) read_gs_word_gcc(offset)
-#define read_gs_dword(offset) read_gs_dword_gcc(offset)
-#define read_gs_qword(offset) read_gs_qword_gcc(offset)
-#define write_gs_byte(offset, data) write_gs_byte_gcc(offset, data)
-#define write_gs_word(offset, data) write_gs_word_gcc(offset, data)
-#define write_gs_dword(offset, data) write_gs_dword_gcc(offset, data)
-#define write_gs_qword(offset, data) write_gs_qword_gcc(offset, data)
 uint8_t read_gs_byte_gcc(size_t offset);
 uint16_t read_gs_word_gcc(size_t offset);
 uint32_t read_gs_dword_gcc(size_t offset);
@@ -624,30 +649,66 @@ void write_gs_byte_gcc(size_t offset, uint8_t data);
 void write_gs_word_gcc(size_t offset, uint16_t data);
 void write_gs_dword_gcc(size_t offset, uint32_t data);
 void write_gs_qword_gcc(size_t offset, uint64_t data);
-#ifdef __cplusplus
 };
+#define read_gs_byte(offset) read_gs_byte_gcc(offset)
+#define read_gs_word(offset) read_gs_word_gcc(offset)
+#define read_gs_dword(offset) read_gs_dword_gcc(offset)
+#define read_gs_qword(offset) read_gs_qword_gcc(offset)
+#define write_gs_byte(offset, data) write_gs_byte_gcc((offset), (data))
+#define write_gs_word(offset, data) write_gs_word_gcc((offset), (data))
+#define write_gs_dword(offset, data) write_gs_dword_gcc((offset), (data))
+#define write_gs_qword(offset, data) write_gs_qword_gcc((offset), (data))
 #endif
 #elif MSVC_COMPAT
 #define read_gs_byte(offset) __readgsbyte(offset)
 #define read_gs_word(offset) __readgsword(offset)
 #define read_gs_dword(offset) __readgsdword(offset)
 #define read_gs_qword(offset) __readgsqword(offset)
-#define write_gs_byte(offset, data) __writegsbyte(offset, data)
-#define write_gs_word(offset, data) __writegsword(offset, data)
-#define write_gs_dword(offset, data) __writegsdword(offset, data)
-#define write_gs_qword(offset, data) __writegsqword(offset, data)
+#define write_gs_byte(offset, data) __writegsbyte((offset), (data))
+#define write_gs_word(offset, data) __writegsword((offset), (data))
+#define write_gs_dword(offset, data) __writegsdword((offset), (data))
+#define write_gs_qword(offset, data) __writegsqword((offset), (data))
 #else
-#define read_gs_byte(offset) (*(uint8_t*)((uintptr_t)offset))
-#define read_gs_word(offset) (*(uint16_t*)((uintptr_t)offset))
-#define read_gs_dword(offset) (*(uint32_t*)((uintptr_t)offset))
-#define read_gs_qword(offset) (*(uint64_t*)((uintptr_t)offset))
-#define write_gs_byte(offset, data) ((void)(*(uint8_t*)((uintptr_t)offset) = (uint8_t)(data)))
-#define write_gs_word(offset, data) ((void)(*(uint16_t*)((uintptr_t)offset) = (uint16_t)(data)))
-#define write_gs_dword(offset, data) ((void)(*(uint32_t*)((uintptr_t)offset) = (uint32_t)(data)))
-#define write_gs_qword(offset, data) ((void)(*(uint64_t*)((uintptr_t)offset) = (uint64_t)(data)))
+#define read_gs_byte(offset) (*(uint8_t*)((uintptr_t)(offset)))
+#define read_gs_word(offset) (*(uint16_t*)((uintptr_t)(offset)))
+#define read_gs_dword(offset) (*(uint32_t*)((uintptr_t)(offset)))
+#define read_gs_qword(offset) (*(uint64_t*)((uintptr_t)(offset)))
+#define write_gs_byte(offset, data) ((void)(*(uint8_t*)((uintptr_t)(offset)) = (uint8_t)(data)))
+#define write_gs_word(offset, data) ((void)(*(uint16_t*)((uintptr_t)(offset)) = (uint16_t)(data)))
+#define write_gs_dword(offset, data) ((void)(*(uint32_t*)((uintptr_t)(offset)) = (uint32_t)(data)))
+#define write_gs_qword(offset, data) ((void)(*(uint64_t*)((uintptr_t)(offset)) = (uint64_t)(data)))
 #endif
 
-#ifdef GCC_COMPAT
+#define read_teb32_byte(offset) read_fs_byte(offset)
+#define read_teb32_word(offset) read_fs_word(offset)
+#define read_teb32_dword(offset) read_fs_dword(offset)
+#define read_teb32_qword(offset) read_fs_qword(offset)
+#define write_teb32_byte(offset, data) write_fs_byte((offset), (data))
+#define write_teb32_word(offset, data) write_fs_word((offset), (data))
+#define write_teb32_dword(offset, data) write_fs_dword((offset), (data))
+#define write_teb32_qword(offset, data) write_fs_qword((offset), (data))
+
+#if !TH_X64
+#define read_teb_byte(offset) read_teb32_byte(offset)
+#define read_teb_word(offset) read_teb32_word(offset)
+#define read_teb_dword(offset) read_teb32_dword(offset)
+#define read_teb_qword(offset) read_teb32_qword(offset)
+#define write_teb_byte(offset, data) write_teb32_byte((offset), (data))
+#define write_teb_word(offset, data) write_teb32_word((offset), (data))
+#define write_teb_dword(offset, data) write_teb32_dword((offset), (data))
+#define write_teb_qword(offset, data) write_teb32_qword((offset), (data))
+#else
+#define read_teb_byte(offset) read_gs_byte(offset)
+#define read_teb_word(offset) read_gs_word(offset)
+#define read_teb_dword(offset) read_gs_dword(offset)
+#define read_teb_qword(offset) read_gs_qword(offset)
+#define write_teb_byte(offset, data) write_gs_byte((offset), (data))
+#define write_teb_word(offset, data) write_gs_word((offset), (data))
+#define write_teb_dword(offset, data) write_gs_dword((offset), (data))
+#define write_teb_qword(offset, data) write_gs_qword((offset), (data))
+#endif
+
+#if GCC_COMPAT
 #ifndef __sptr
 #define __sptr
 #endif

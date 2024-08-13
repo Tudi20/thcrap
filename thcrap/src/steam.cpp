@@ -18,10 +18,10 @@
 
 #include "thcrap.h"
 
-#ifdef _AMD64_
-const char *STEAM_API_DLL_FN = "steam_api64.dll";
+#ifdef TH_X64
+static constexpr char STEAM_API_DLL_PATH[] = "bin\\steam_api64.dll";
 #else
-const char *STEAM_API_DLL_FN = "steam_api.dll";
+static constexpr char STEAM_API_DLL_PATH[] = "bin\\steam_api.dll";
 #endif
 
 typedef const char* TH_CDECL steam_appid_func_t(void);
@@ -43,7 +43,7 @@ DLL_FUNC_DEF(SteamAPI, Shutdown);
 
 extern "C" TH_EXPORT void steam_mod_post_init(void)
 {
-	std::string appid = "";
+	std::string appid;
 
 	const json_t *appid_obj = json_object_get(runconfig_json_get(), "steam_appid");
 	if (appid_obj) {
@@ -61,7 +61,7 @@ extern "C" TH_EXPORT void steam_mod_post_init(void)
 	}
 
 	// Got AppID?
-	if (appid == "") {
+	if (appid.empty()) {
 		return;
 	}
 
@@ -69,21 +69,15 @@ extern "C" TH_EXPORT void steam_mod_post_init(void)
 	if(RegOpenKeyExA(HKEY_CURRENT_USER,
 		"Software\\Valve\\Steam\\ActiveProcess", 0, KEY_READ, &hSteamProcess
 	)) {
-		log_printf("[Steam] Not installed\n");
+		log_print("[Steam] Not installed\n");
 		return;
 	}
 
 	// Got steam_api.dll?
-	const char *thcrap_dir = runconfig_thcrap_dir_get();
-	
 
-	size_t dll_fn_len = strlen(thcrap_dir) + strlen("\\bin\\") + strlen(STEAM_API_DLL_FN) + 1;
-	VLA(char, dll_fn, dll_fn_len);
+	BUILD_VLA_STR(char, dll_fn, runconfig_thcrap_dir_get_view(), STEAM_API_DLL_PATH);
 	defer(VLA_FREE(dll_fn));
-	strcpy(dll_fn, thcrap_dir);
-	strcat(dll_fn, "\\bin\\");
-	strcat(dll_fn, STEAM_API_DLL_FN);
-
+	
 	hSteamAPI = LoadLibraryExU(dll_fn, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 	if(!hSteamAPI) {
 		log_printf(

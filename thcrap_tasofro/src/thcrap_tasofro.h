@@ -70,6 +70,7 @@ int patch_th175_json(void *file_inout, size_t size_out, size_t size_in, const ch
 #ifdef __cplusplus
 }
 
-std::string parse_ruby(const std::string& in, const char *out_ruby_tag = "\\R[");
-
+wchar_t *arabic_convert_bidi(const wchar_t *w_in);
+std::string arabic_convert_bidi(const std::string& in);
+std::string arabic_convert_bidi(const char *in);
 #endif

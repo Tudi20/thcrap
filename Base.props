@@ -10,8 +10,12 @@
     <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <PropertyGroup>
-    <TargetName Condition="$(UseDebugLibraries)==true">$(RootNamespace)_d</TargetName>
-    <TargetName Condition="$(UseDebugLibraries)!=true">$(RootNamespace)</TargetName>
+    <BitsSuffix Condition="'$(Platform)'=='x64' And '$(UseBitsSuffix)'==''">_64</BitsSuffix>
+    <DebugSuffix Condition="$(UseDebugLibraries)==true Or '$(Configuration)'=='Debug'">_d</DebugSuffix>
+    <Suffix>$(BitsSuffix)$(DebugSuffix)</Suffix>
+  </PropertyGroup>
+  <PropertyGroup>
+    <TargetName>$(RootNamespace)$(Suffix)</TargetName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
@@ -33,6 +37,9 @@
   <PropertyGroup>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <PropertyGroup>
+    <SigningCertPath>$(SolutionDir)cert.pfx</SigningCertPath>
+  </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(SolutionDir)libs\external_deps\include\;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -41,7 +48,7 @@
       <WarningLevel>Level3</WarningLevel>
       <TreatSpecificWarningsAsErrors>4013;4028;4133</TreatSpecificWarningsAsErrors>
       <!-- This warning is inside shlobj.h -->
-      <DisableSpecificWarnings>4091;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4091;4200;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <PreprocessorDefinitions>BUILDER_NAME_W=L"$(USERNAME)";UNICODE;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalOptions>/utf-8 /Zc:__cplusplus /Zc:externConstexpr /Zc:threadSafeInit- %(AdditionalOptions)</AdditionalOptions>
@@ -56,8 +63,8 @@
     <BuildDependsOn>$(BuildDependsOn);SignBuild</BuildDependsOn>
   </PropertyGroup>
   <Target Name="SignBuild" Condition="'$(ConfigurationType)'!='StaticLibrary' And '$(SkipSign)'!='true'">
-    <Exec Condition="Exists('$(SolutionDir)cert.pfx')" Command='signtool sign /v /f "$(SolutionDir)cert.pfx" /d "$(ProjectTitle)" /du "$(ProjectURL)" "$(TargetPath)"' />
-    <Warning Condition="!Exists('$(SolutionDir)cert.pfx')" Text="$(SolutionDir)cert.pfx not found. Binaries won't be digitally signed, and thcrap won't be able to automatically update itself.%0APlease see README.md for instructions on how to generate this file." />
+    <Exec Condition="Exists('$(SigningCertPath)')" Command='signtool sign /v /f "$(SigningCertPath)" /d "$(ProjectTitle)" /du "$(ProjectURL)" "$(TargetPath)"' />
+    <Message Condition="!Exists('$(SigningCertPath)')" Importance="high" Text="$(SigningCertPath) not found. Binaries won't be digitally signed, and thcrap won't be able to automatically update itself.%0APlease see README.md for instructions on how to generate this file." />
   </Target>
   <PropertyGroup>
     <GASPath>$(SolutionDir)libs\external_deps\</GASPath>

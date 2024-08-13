@@ -12,13 +12,10 @@
 
 int file_rep_init(file_rep_t *fr, const char *file_name)
 {
-	size_t fn_len;
-
 	if (fr->name) {
 		file_rep_clear(fr);
 	}
-	fn_len = strlen(file_name) + 1;
-	fr->name = EnsureUTF8(file_name, fn_len);
+	fr->name = EnsureUTF8(file_name, strlen(file_name) + 1);
 	fr->rep_buffer = stack_game_file_resolve(fr->name, &fr->pre_json_size);
 	fr->hooks = patchhooks_build(fr->name);
 	if (fr->hooks) {
@@ -37,18 +34,21 @@ static int file_rep_hooks_run(file_rep_t *fr)
 
 int file_rep_clear(file_rep_t *fr)
 {
-	if(!fr) {
-		return -1;
+	if (fr) {
+		json_decref_safe(fr->patch);
+		if (void* hooks = fr->hooks) {
+			free(hooks);
+		}
+		if (char* name = fr->name) {
+			free(name);
+		}
+		if (void* rep_buffer = fr->rep_buffer) {
+			free(rep_buffer);
+		}
+		*fr = {}; // Sets all fields to 0 or NULL
+		return 0;
 	}
-	SAFE_FREE(fr->rep_buffer);
-	fr->game_buffer = nullptr;
-	fr->patch = json_decref_safe(fr->patch);
-	SAFE_FREE(fr->hooks);
-	fr->patch_size = 0;
-	fr->pre_json_size = 0;
-	SAFE_FREE(fr->name);
-	fr->disable = false;
-	return 0;
+	return -1;
 }
 
 /// Thread-local storage
@@ -85,14 +85,12 @@ int BP_file_load(x86_reg_t *regs, json_t *bp_info)
 
 	// Mandatory parameters
 	// --------------------
-	auto file_name = (char**)json_object_get_pointer(bp_info, regs, "file_name");
-	auto file_size = json_object_get_pointer(bp_info, regs, "file_size");
 	BP_file_buffer(regs, bp_info);
-	// -----------------
-
-	if(file_name) {
+	if (auto file_name = (char**)json_object_get_pointer(bp_info, regs, "file_name")) {
 		file_rep_init(fr, *file_name);
 	}
+	auto file_size = json_object_get_pointer(bp_info, regs, "file_size");
+	// -----------------
 
 	// th08 and th09 use their file size variable as the loop counter for LZSS
 	// decompression. Putting anything other than the original file size from
@@ -115,62 +113,42 @@ int BP_file_load(x86_reg_t *regs, json_t *bp_info)
 	}
 
 	// Got everything for a full file replacement?
-	if(!fr->game_buffer || !fr->rep_buffer || !fr->pre_json_size) {
+	if(!fr->rep_buffer || !fr->pre_json_size || !fr->game_buffer) {
 		return 1;
 	}
-
-	// Load-specific parameters
-	// ------------------------
-	auto file_buffer_addr_copy = json_object_get_pointer(bp_info, regs, "file_buffer_addr_copy");
-	size_t stack_clear_size = json_object_get_hex(bp_info, "stack_clear_size");
-	size_t eip_jump_dist = json_object_get_hex(bp_info, "eip_jump_dist");
-	// ------------------------
 
 	// Let's do it
 	memcpy(fr->game_buffer, fr->rep_buffer, fr->pre_json_size);
 
 	file_rep_hooks_run(fr);
 
-	if(eip_jump_dist) {
+	// Post-load parameters
+	// ------------------------
+	if(size_t eip_jump_dist = json_object_get_hex(bp_info, "eip_jump_dist")) {
 		regs->retaddr += eip_jump_dist;
 	}
-	if(file_buffer_addr_copy) {
-		*file_buffer_addr_copy = (size_t)fr->game_buffer;
+	if(void** file_buffer_addr_copy = (void**)json_object_get_pointer(bp_info, regs, "file_buffer_addr_copy")) {
+		*file_buffer_addr_copy = fr->game_buffer;
 	}
-	if(stack_clear_size) {
-		regs->esp += stack_clear_size;
-	}
+	// ------------------------
+
 	file_rep_clear(fr);
 	return 0;
-}
-
-int BP_file_name(x86_reg_t *regs, json_t *bp_info)
-{
-	return BP_file_load(regs, bp_info);
-}
-
-int BP_file_size(x86_reg_t *regs, json_t *bp_info)
-{
-	return BP_file_load(regs, bp_info);
 }
 
 // Cool function name.
 int DumpDatFile(const char *dir, const char *name, const void *buffer, size_t size)
 {
-	if(!buffer || !name) {
+	if unexpected(!buffer || !name) {
 		return -1;
 	}
-	{
-		size_t fn_len = strlen(dir) + 1 + strlen(name) + 1;
-		VLA(char, fn, fn_len);
 
-		sprintf(fn, "%s/%s", dir, name);
-
-		if(!PathFileExists(fn)) {
-			file_write(fn, buffer, size);
-		}
-		VLA_FREE(fn);
+	BUILD_VLA_STR(char, fn, dir, "/", name);
+	if (!PathFileExistsU(fn)) {
+		file_write(fn, buffer, size);
 	}
+	VLA_FREE(fn);
+
 	return 0;
 }
 

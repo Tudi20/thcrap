@@ -15,13 +15,9 @@
 #include <json5pp.hpp>
 #pragma warning(pop)
 
-json_t* json_decref_safe(json_t *json)
+json_t* (json_decref_safe)(json_t *json)
 {
-	if(json && json->refcount != (size_t)-1 && --json->refcount == 0) {
-        json_delete(json);
-		return NULL;
-	}
-	return json;
+	return json_decref_safe_inline(json);
 }
 
 size_t json_hex_value(json_t *val)
@@ -114,6 +110,8 @@ size_t json_array_get_hex(json_t *arr, const size_t ind)
 {
 	json_t *val = json_array_get(arr, ind);
 	if(val) {
+		// Suppress deprecation warning because this is just a wrapper function
+#pragma warning(suppress : 4996)
 		size_t ret = json_hex_value(val);
 		if(json_is_string(val)) {
 			// Rewrite the JSON value
@@ -220,6 +218,8 @@ size_t json_object_get_hex(json_t *object, const char *key)
 {
 	json_t *val = json_object_get(object, key);
 	if(val) {
+		// Suppress deprecation warning because this is just a wrapper function
+#pragma warning(disable : 4996)
 		size_t ret = json_hex_value(val);
 		if(json_is_string(val)) {
 			 // Rewrite the JSON value
@@ -256,7 +256,7 @@ TH_CALLER_FREE char* json_object_get_string_copy(const json_t *object, const cha
 json_t* json_object_merge(json_t *old_obj, json_t *new_obj)
 {
 	if (!json_object_update_recursive(old_obj, new_obj)) {
-		json_decref(new_obj);
+		json_decref_fast(new_obj);
 		return old_obj;
 	}
 	else {
@@ -275,18 +275,11 @@ json_t* json_object_get_keys_sorted(const json_t *object)
 	if(object) {
 		size_t size = json_object_size(object);
 		VLA(const char*, keys, size);
-		size_t i;
-		void *iter = json_object_iter((json_t *)object);
 
-		if(!keys) {
-			return NULL;
-		}
-
-		i = 0;
-		while(iter) {
-			keys[i] = json_object_iter_key(iter);
-			iter = json_object_iter_next((json_t *)object, iter);
-			i++;
+		size_t i = 0;
+		const char* key;
+		json_object_foreach_key((json_t*)object, key) {
+			keys[i++] = key;
 		}
 
 		qsort((void*)keys, size, sizeof(const char *), object_key_compare_keys);
@@ -309,24 +302,27 @@ template <typename T, size_t N> T json_tuple_value(
 		constexpr stringref_t ERR_FMT = "Must be specified as a JSON array in [%s] format.";
 		constexpr stringref_t SEP = ", ";
 		size_t allnames_len = SEP.length() * (N - 1);
-		for(auto &i : value_names) {
-			allnames_len += i.length();
+		for(const auto& name : value_names) {
+			allnames_len += name.length();
 		}
 		VLA(char, allnames, allnames_len + 1);
-		defer({ VLA_FREE(allnames); });
 
 		char *p = allnames;
-		for(int i = 0; i < (int)(N) - 1; i++) {
-			p = stringref_copy_advance_dst(p, value_names[i]);
-			p = stringref_copy_advance_dst(p, SEP);
+
+		p = stringref_copy_advance_dst(p, value_names[0]);
+		if constexpr (N > 1) {
+			for (size_t i = 1; i < N; ++i) {
+				p = stringref_copy_advance_dst(p, SEP);
+				p = stringref_copy_advance_dst(p, value_names[i]);
+			}
 		}
-		p = stringref_copy_advance_dst(p, value_names[N - 1]);
 
 		ret.err.resize(ERR_FMT.length() + allnames_len + 1);
 		sprintf(&ret.err[0], ERR_FMT.data(), allnames);
+		VLA_FREE(allnames);
 		return ret;
 	}
-	for(unsigned int i = 0; i < N; i++) {
+	for(size_t i = 0; i < N; ++i) {
 		auto coord_j = json_array_get(arr, i);
 		bool failed = !json_is_integer(coord_j);
 		if(!failed) {
@@ -381,72 +377,89 @@ json_t *json5_loadb(const void *buffer, size_t size, char **error)
 	return jansson;
 }
 
-json_t* json_load_file_report(const char *json_fn)
+static constexpr uint8_t utf8_bom[] = { 0xef, 0xbb, 0xbf };
+static constexpr uint8_t utf16le_bom[] = { 0xff, 0xfe };
+
+template<size_t bom_len>
+static inline bool skip_bom(uint8_t*& json_buffer, size_t& json_size, const uint8_t(&bom)[bom_len]) {
+	if (json_size > bom_len &&
+		*(uint16_t*)json_buffer == TextInt(bom[0], bom[1])
+	) {
+		if constexpr (bom_len == 3) {
+			if ((uint8_t)json_buffer[2] != bom[2]) {
+				return false;
+			}
+		}
+		json_buffer += bom_len;
+		json_size += bom_len;
+		return true;
+	}
+	return false;
+}
+
+json_t* json_load_file_report_size(const char *json_fn, size_t* size_out)
 {
-	size_t json_size;
-	const unsigned char utf8_bom[] = { 0xef, 0xbb, 0xbf };
-	const unsigned char utf16le_bom[] = { 0xff, 0xfe };
-	char *converted_buffer = nullptr;
-	char *error = nullptr;
-	json_t *ret;
+	if (!size_out) size_out = (size_t*)&size_out;
+
 	int msgbox_ret;
-	void* file_buffer;
-	char *json_buffer;
 
-start:
-	msgbox_ret = 0;
-	file_buffer = file_read(json_fn, &json_size);
-	json_buffer = (char*)file_buffer;
+	do {
 
-	if (!json_buffer || !json_size) {
-		return NULL;
-	}
+		size_t json_size;
+		uint8_t* heap_buffer = (uint8_t*)file_read(json_fn, &json_size);
 
-	auto skip_bom = [&json_buffer, &json_size](const unsigned char *bom, size_t bom_len) {
-		if (json_size > bom_len && !memcmp(json_buffer, bom, bom_len)) {
-			json_buffer += bom_len;
-			json_size -= bom_len;
-			return true;
+		if unexpected(!heap_buffer || !json_size) {
+			break;
 		}
-		return false;
-	};
 
-	if (!skip_bom(utf8_bom, sizeof(utf8_bom))) {
-		// Convert UTF-16LE to UTF-8.
-		// NULL bytes do not count as significant whitespace in JSON, so
-		// they can indeed be used in the absence of a BOM. (In fact, the
-		// JSON RFC 4627 Chapter 3 explicitly mentions this possibility.)
-		if (
-			skip_bom(utf16le_bom, sizeof(utf16le_bom))
-			|| (json_size > 2 && json_buffer[1] == '\0')
+		uint8_t* json_buffer = heap_buffer;
+
+		if (!skip_bom(json_buffer, json_size, utf8_bom)) {
+			// Convert UTF-16LE to UTF-8.
+			// NULL bytes do not count as significant whitespace in JSON, so
+			// they can indeed be used in the absence of a BOM. (In fact, the
+			// JSON RFC 4627 Chapter 3 explicitly mentions this possibility.)
+			if (
+				skip_bom(json_buffer, json_size, utf16le_bom) ||
+				(json_size > 2 && json_buffer[1] == '\0')
 			) {
-			auto converted_len = json_size * UTF8_MUL;
-			converted_buffer = (char *)malloc(converted_len);
-			json_size = WideCharToMultiByte(
-				CP_UTF8, 0, (const wchar_t *)json_buffer, json_size / 2,
-				converted_buffer, converted_len, NULL, NULL
-			);
-			json_buffer = converted_buffer;
+				size_t converted_len = json_size * UTF8_MUL;
+				uint8_t* converted_buffer = (uint8_t*)malloc(converted_len);
+				json_size = WideCharToMultiByte(
+					CP_UTF8, 0, (const wchar_t*)json_buffer, json_size / 2,
+					(char*)converted_buffer, converted_len, NULL, NULL
+				);
+				free(heap_buffer);
+				heap_buffer = json_buffer = converted_buffer;
+			}
 		}
-	}
-	ret = json5_loadb(json_buffer, json_size, &error);
-	if (!ret) {
+
+		char* error;
+		json_t* ret = json5_loadb(json_buffer, json_size, &error);
+
+		free(heap_buffer);
+
+		if (ret) {
+			*size_out = json_size;
+			return ret;
+		}
+
 		msgbox_ret = log_mboxf(NULL, MB_RETRYCANCEL | MB_ICONSTOP,
 			"JSON parsing error: %s\n"
 			"\n"
 			"(%s)",
 			error, json_fn
 		);
-	}
-	SAFE_FREE(converted_buffer);
-	SAFE_FREE(file_buffer);
-	SAFE_FREE(error);
+		free(error);
 
-	if (msgbox_ret == IDRETRY) {
-		goto start;
-	}
+	} while (msgbox_ret == IDRETRY);
 
-	return ret;
+	*size_out = 0;
+	return NULL;
+}
+
+json_t* json_load_file_report(const char *json_fn) {
+	return json_load_file_report_size(json_fn, NULL);
 }
 
 void json_dump_log(const json_t *json, size_t flags)
@@ -560,8 +573,8 @@ TH_CHECK_RET jeval_error_t json_eval_int(const json_t* val, size_t* out, jeval_f
 #endif
 }
 
-#ifndef TH_X64
-TH_CHECK_RET jeval_error_t json_eval_int64(const json_t* val, json_int_t* out, jeval_flags_t flags) {
+#if !TH_X64
+TH_CHECK_RET jeval_error_t json_eval_int64(const json_t* val, jeval64_t* out, jeval_flags_t flags) {
 	return json_evaluate(val, JEVAL_INTEGER | (flags & JEVAL_MODE_MASK), out);
 }
 #endif
@@ -583,8 +596,8 @@ TH_CHECK_RET jeval_error_t json_object_get_eval_int(const json_t* object, const 
 	return json_eval_int(json_object_get(object, key), out, flags);
 }
 
-#ifndef TH_X64
-TH_CHECK_RET jeval_error_t json_object_get_eval_int64(const json_t* object, const char* key, json_int_t* out, jeval_flags_t flags) {
+#if !TH_X64
+TH_CHECK_RET jeval_error_t json_object_get_eval_int64(const json_t* object, const char* key, jeval64_t* out, jeval_flags_t flags) {
 	return json_eval_int64(json_object_get(object, key), out, flags);
 }
 #endif
@@ -610,9 +623,9 @@ size_t json_eval_int_default(const json_t* val, size_t default_ret, jeval_flags_
 	return ret;
 }
 
-#ifndef TH_X64
-json_int_t json_eval_int64_default(const json_t* val, json_int_t default_ret, jeval_flags_t flags) {
-	json_int_t ret = default_ret;
+#if !TH_X64
+jeval64_t json_eval_int64_default(const json_t* val, json_int_t default_ret, jeval_flags_t flags) {
+	jeval64_t ret = default_ret;
 	(void)json_eval_int64(val, &ret, flags);
 	return ret;
 }
@@ -643,9 +656,9 @@ size_t json_object_get_eval_int_default(const json_t* object, const char* key, s
 	return ret;
 }
 
-#ifndef TH_X64
-json_int_t json_object_get_eval_int64_default(const json_t* object, const char* key, json_int_t default_ret, jeval_flags_t flags) {
-	json_int_t ret = default_ret;
+#if !TH_X64
+jeval64_t json_object_get_eval_int64_default(const json_t* object, const char* key, jeval64_t default_ret, jeval_flags_t flags) {
+	jeval64_t ret = default_ret;
 	(void)json_eval_int64(json_object_get(object, key), &ret, flags);
 	return ret;
 }
