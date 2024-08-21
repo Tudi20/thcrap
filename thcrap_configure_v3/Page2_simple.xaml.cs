@@ -29,7 +29,7 @@ namespace thcrap_configure_v3
             }
             public RepoPatch patch { get; set; }
             public bool IsChecked { get; set; }
-        };
+        }
         private List<RadioPatch> patches;
 
         public Page2_simple()
