@@ -25,7 +25,6 @@ namespace thcrap_configure_v3
             console.IsChecked = ThcrapDll.globalconfig_get_boolean("console", false);
             use_wininet.IsChecked = ThcrapDll.globalconfig_get_boolean("use_wininet", false);
             codepage.Text = ThcrapDll.globalconfig_get_integer("codepage", 932).ToString();
-
             {
                 long exceptionDetail = ThcrapDll.globalconfig_get_integer("exception_detail", 932);
 
@@ -114,7 +113,6 @@ namespace thcrap_configure_v3
             ThcrapDll.globalconfig_set_boolean("console", console.IsChecked == true);
             ThcrapDll.globalconfig_set_boolean("use_wininet", use_wininet.IsChecked == true);
             ThcrapDll.globalconfig_set_integer("codepage", Int32.Parse(codepage.Text));
-
             {
                 int exceptionDetail = 0;
 

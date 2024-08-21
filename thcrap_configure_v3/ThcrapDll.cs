@@ -150,7 +150,7 @@ namespace thcrap_configure_v3
         {
             public IntPtr repo_id;
             public IntPtr patch_id;
-        };
+        }
         [StructLayout(LayoutKind.Sequential, Pack = 4), Serializable]
         public struct patch_t
         {
@@ -175,7 +175,7 @@ namespace thcrap_configure_v3
         {
             public string id;
             public IntPtr path;
-        };
+        }
         [StructLayout(LayoutKind.Sequential, Pack = 4), Serializable]
         public struct game_search_result
         {
